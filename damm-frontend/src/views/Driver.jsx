@@ -1,26 +1,32 @@
-import React, { useState, useEffect, useCallback, useRef } from "react";
+import React, { useState, useEffect, useCallback, useRef, useMemo } from "react";
 import { MapContainer, TileLayer, Marker, Popup, Polyline, useMap } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 import { getRoute, putStop, postAssistant } from "../api";
 
-const RED     = "#E30613";
-const ORANGE  = "#f39c12";
+const RED    = "#E30613";
+const ORANGE = "#f39c12";
 const DEPOT_LAT = 41.5388;
 const DEPOT_LON = 2.2131;
 
-/* ── Icones de marcador ─────────────────────────────────────────────────────── */
-function makeIcon(num, color, size = 30) {
+/* ── Marker icons (no emojis) ───────────────────────────────────────────────── */
+function makeIcon(num, color, size = 28) {
   return L.divIcon({
-    html: `<div style="background:${color};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:${Math.round(size * 0.43)}px;border:2.5px solid #fff;box-shadow:0 2px 8px rgba(0,0,0,.5)">${num}</div>`,
-    iconSize: [size, size], iconAnchor: [size / 2, size / 2], className: "",
+    html: `<div style="background:${color};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:${Math.round(size*0.42)}px;border:2px solid rgba(255,255,255,.9);box-shadow:0 2px 8px rgba(0,0,0,.5);font-family:'DM Mono',monospace">${num}</div>`,
+    iconSize: [size, size], iconAnchor: [size/2, size/2], className: "",
   });
 }
-
-function makePulsingIcon(num, size = 36) {
+function makePulsingIcon(num, size = 34) {
   return L.divIcon({
-    html: `<div style="background:${ORANGE};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:${Math.round(size * 0.43)}px;border:3px solid #fff;box-shadow:0 0 12px rgba(243,156,18,.7);animation:pulse 0.7s ease-in-out infinite">${num}</div>`,
-    iconSize: [size, size], iconAnchor: [size / 2, size / 2], className: "",
+    html: `<div style="background:${ORANGE};color:#fff;border-radius:50%;width:${size}px;height:${size}px;display:flex;align-items:center;justify-content:center;font-weight:800;font-size:${Math.round(size*0.42)}px;border:2.5px solid #fff;box-shadow:0 0 12px rgba(243,156,18,.7);animation:pulse 0.7s ease-in-out infinite;font-family:'DM Mono',monospace">${num}</div>`,
+    iconSize: [size, size], iconAnchor: [size/2, size/2], className: "",
+  });
+}
+/* Truck: small red rectangle, no emoji */
+function makeTruckIcon() {
+  return L.divIcon({
+    html: `<div style="width:18px;height:11px;background:${RED};border-radius:3px;border:2px solid #fff;box-shadow:0 2px 8px rgba(227,6,19,.6)"></div>`,
+    className: "", iconAnchor: [9, 5],
   });
 }
 
@@ -28,14 +34,14 @@ function makePulsingIcon(num, size = 36) {
 function FitBounds({ coords }) {
   const map = useMap();
   useEffect(() => {
-    if (coords.length > 0) map.fitBounds(coords, { padding: [40, 40] });
+    if (coords.length > 0) map.fitBounds(coords, { padding: [32, 32] });
   }, [coords, map]);
   return null;
 }
 
-/* ── Animació del camió (20s + pauses per parada) ───────────────────────────── */
+/* ── Segment animation (20 s + pauses) ─────────────────────────────────────── */
 function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
-  const map = useMap();
+  const map      = useMap();
   const stateRef = useRef({ cancel: false, rafId: null, marker: null });
 
   useEffect(() => {
@@ -44,20 +50,15 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
     const state = stateRef.current;
     state.cancel = false;
 
-    // Emoji del camió
-    const icon = L.divIcon({
-      html: '<span style="font-size:24px;line-height:1;display:block;transform:scaleX(-1)">🚛</span>',
-      className: "", iconAnchor: [12, 12],
-    });
-    state.marker = L.marker(geometry[0], { icon, zIndexOffset: 1000 }).addTo(map);
+    state.marker = L.marker(geometry[0], { icon: makeTruckIcon(), zIndexOffset: 1000 }).addTo(map);
 
     const validStops = stops.filter(s => s.lat && s.lon);
     const N          = validStops.length;
     const TOTAL_MS   = 20000;
-    const PAUSE_MS   = N > 0 ? Math.min(900, Math.round(5000 / N)) : 0;
-    const MOVE_MS    = Math.max(TOTAL_MS - PAUSE_MS * N, 5000);
+    const PAUSE_MS   = N > 0 ? Math.min(1500, Math.round(6000 / N)) : 0;
+    const MOVE_MS    = Math.max(TOTAL_MS - PAUSE_MS * N, 4000);
 
-    // Índex del punt de geometria més proper a cada parada
+    /* Closest geometry point to each stop */
     const stopIndices = validStops.map(stop => {
       let minDist = Infinity, minIdx = 0;
       geometry.forEach(([lat, lon], i) => {
@@ -67,7 +68,6 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
       return minIdx;
     });
 
-    /* Anima un segment de la polilínia en segMs ms */
     function animateSegment(fromIdx, toIdx, segMs) {
       return new Promise(resolve => {
         if (state.cancel) { resolve(); return; }
@@ -82,13 +82,15 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
           if (state.cancel) { resolve(); return; }
           const t  = Math.min((now - t0) / dur, 1);
           const fi = t * (pts.length - 1);
-          const i  = Math.min(Math.floor(fi), pts.length - 2);
+          const i  = Math.max(0, Math.min(Math.floor(fi), pts.length - 2));
           const fr = fi - i;
+          /* null-guard: bail cleanly if pts are somehow invalid */
+          if (!pts[i] || !pts[i + 1]) { resolve(); return; }
           const lat = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * fr;
           const lng = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * fr;
           if (state.marker) state.marker.setLatLng([lat, lng]);
           if (t < 1) { state.rafId = requestAnimationFrame(step); }
-          else { resolve(); }
+          else        { resolve(); }
         }
         state.rafId = requestAnimationFrame(step);
       });
@@ -101,18 +103,14 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
     async function run() {
       for (let seg = 0; seg <= N; seg++) {
         if (state.cancel) break;
-
-        const fromIdx = seg === 0 ? 0 : (stopIndices[seg - 1] ?? 0);
+        const fromIdx = seg === 0 ? 0 : (stopIndices[seg-1] ?? 0);
         const toIdx   = seg === N ? geometry.length - 1 : (stopIndices[seg] ?? geometry.length - 1);
         const segLen  = Math.max(1, toIdx - fromIdx);
         const segMs   = (segLen / geometry.length) * MOVE_MS;
 
-        // Neteja parada anterior (si n'hi ha)
-        if (seg > 0) callbacksRef.current.onStopReached(-1, "");
-
+        if (seg > 0) callbacksRef.current.onStopReached(-1, "", -1);
         await animateSegment(fromIdx, toIdx, segMs);
 
-        // Pausa a la parada
         if (seg < N && !state.cancel) {
           callbacksRef.current.onStopReached(seg, validStops[seg].client_nom, validStops[seg].order);
           await sleep(PAUSE_MS);
@@ -133,56 +131,278 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
   return null;
 }
 
-/* ── Ruta OSRM amb dipòsit ──────────────────────────────────────────────────── */
+/* ── OSRM route with depot ──────────────────────────────────────────────────── */
 async function fetchOSRMRoute(stops) {
   const valid = stops.filter(s => s.lat && s.lon);
   if (valid.length < 1) return null;
   const coords = [`${DEPOT_LON},${DEPOT_LAT}`, ...valid.map(s => `${s.lon},${s.lat}`)].join(";");
   try {
-    const res  = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=true`);
+    const res  = await fetch(`https://router.project-osrm.org/route/v1/driving/${coords}?overview=full&geometries=geojson&steps=false`);
     const data = await res.json();
     if (!data.routes?.[0]) return null;
     const route    = data.routes[0];
     const geometry = route.geometry.coordinates.map(([lon, lat]) => [lat, lon]);
-    const steps    = route.legs.flatMap(leg => leg.steps)
-      .filter(s => s.maneuver?.type !== "arrive" && s.name)
-      .map(s => {
-        const mod  = s.maneuver?.modifier ? ` (${s.maneuver.modifier})` : "";
-        const type = s.maneuver?.type === "turn"       ? "Gira"
-                   : s.maneuver?.type === "roundabout" ? "Rotonda"
-                   : "Segueix";
-        return `${type}${mod} per ${s.name}`;
-      });
-    return { geometry, steps, distance_m: route.distance, duration_s: route.duration };
+    /* Per-leg travel seconds */
+    const legDurations = route.legs.map(leg => leg.duration); // seconds
+    return {
+      geometry,
+      legDurations,
+      distance_m : route.distance,
+      duration_s : route.duration,
+    };
   } catch { return null; }
 }
 
+function minToHHMM(m) {
+  if (!m && m !== 0) return "—";
+  const h = Math.floor(m / 60);
+  const min = m % 60;
+  return `${h.toString().padStart(2,"0")}:${min.toString().padStart(2,"0")}`;
+}
+function formatDuration(min) {
+  if (!min) return "—";
+  const h = Math.floor(min / 60);
+  const m = min % 60;
+  return h > 0 ? `${h}h ${m}min` : `${m}min`;
+}
+
+/* ── Compute per-stop ETAs using OSRM leg durations ──────────────────────────── */
+function computeETAs(stops, legDurations) {
+  if (!stops.length) return [];
+  let cursor = 8 * 60; // 08:00 departure
+  return stops.map((s, i) => {
+    const travelMin = legDurations?.[i] != null ? Math.round(legDurations[i] / 60) : 0;
+    cursor += travelMin;
+    // Wait for opening time
+    const open = s.time_window?.open ? (parseInt(s.time_window.open) * 60 + parseInt(s.time_window.open.slice(3))) : 480;
+    if (cursor < open) cursor = open;
+    const arrival = cursor;
+    const service = s.service_min ?? 5;
+    cursor += service;
+    return { arrival, departure: cursor, travelMin, service };
+  });
+}
+
+/* ── Group consecutive stops by pedestrian zone ─────────────────────────────── */
+function groupStops(stops) {
+  const groups = [];
+  let i = 0;
+  while (i < stops.length) {
+    const s  = stops[i];
+    const pz = s.pedestrian_zone?.zone_id;
+    if (pz) {
+      /* Collect all consecutive stops in same zone */
+      const grp = [s];
+      let j = i + 1;
+      while (j < stops.length && stops[j].pedestrian_zone?.zone_id === pz) {
+        grp.push(stops[j]);
+        j++;
+      }
+      groups.push({ type: "pz", zone_id: pz, stops: grp, parking: s.pedestrian_zone });
+      i = j;
+    } else {
+      groups.push({ type: "normal", stops: [s] });
+      i++;
+    }
+  }
+  return groups;
+}
+
+/* ── Route sheet table ──────────────────────────────────────────────────────── */
+function RouteSheet({ stops, route, osrmKm, osrmMin, legDurations, animStopOrd, allDone }) {
+  const kpis   = route?.kpis ?? {};
+  const etas   = computeETAs(stops, legDurations);
+  const groups = groupStops(stops);
+
+  /* Compute return time */
+  const lastEta   = etas[etas.length - 1];
+  const returnMin = lastEta ? lastEta.departure + Math.round((osrmMin ?? 0) / (stops.length + 1)) : null;
+
+  /* Departure 08:00, estimate return */
+  const totalKm  = osrmKm ?? kpis.total_km ?? "—";
+  const totalMin = osrmMin ?? Math.round(kpis.total_min ?? 0);
+
+  let stopSeq = 0; // global stop counter for the table
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", height: "100%", overflow: "hidden" }}>
+      {/* Header */}
+      <div style={{ padding: "12px 16px 8px", borderBottom: "1px solid #dde1e9", flexShrink: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+          <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900, fontSize: 16, color: "#111827", letterSpacing: "1.5px" }}>
+            FULL DE RUTA
+          </div>
+          <button onClick={() => window.print()} style={{
+            background: "none", border: "1px solid #dde1e9", color: "#6b7280",
+            borderRadius: 5, padding: "3px 10px", fontSize: 11, cursor: "pointer",
+            fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.5px",
+          }}>
+            Imprimir full de ruta
+          </button>
+        </div>
+        <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", marginTop: 4 }}>
+          {kpis.vehicle_name ?? "Camio"} &nbsp;·&nbsp; {kpis.n_stops ?? stops.length} parades &nbsp;·&nbsp; {totalKm} km
+        </div>
+      </div>
+
+      {/* Table header */}
+      <div style={{
+        display: "grid", gridTemplateColumns: "28px 1fr 56px 52px 50px",
+        gap: 0, padding: "5px 12px", borderBottom: "1px solid #dde1e9",
+        fontSize: 9, fontWeight: 700, color: "#9ca3af",
+        fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px",
+        flexShrink: 0, background: "#f8f9fb",
+      }}>
+        <span>#</span>
+        <span>CLIENT · ADRESA</span>
+        <span style={{ textAlign: "right" }}>HORA</span>
+        <span style={{ textAlign: "right" }}>DESC.</span>
+        <span style={{ textAlign: "right" }}>PALES</span>
+      </div>
+
+      {/* Rows */}
+      <div style={{ flex: 1, overflowY: "auto" }}>
+        {groups.map((grp, gi) => {
+          if (grp.type === "pz") {
+            /* Pedestrian zone group — shared parking row + sub-clients */
+            const firstStop = grp.stops[0];
+            const lastStop  = grp.stops[grp.stops.length - 1];
+            const firstIdx  = stops.indexOf(firstStop);
+            const etaFirst  = etas[firstIdx];
+            const totalSvc  = grp.stops.reduce((s, st) => s + (st.service_min ?? 5), 0);
+            const pallet1   = firstStop.truck_zone?.pallet_start;
+            const pallet2   = lastStop.truck_zone?.pallet_end;
+            const isActive  = grp.stops.some(s => s.order === animStopOrd);
+            stopSeq++;
+            const seqNum = stopSeq;
+
+            return (
+              <React.Fragment key={gi}>
+                {/* Zone parking header row */}
+                <div style={{
+                  display: "grid", gridTemplateColumns: "28px 1fr 56px 52px 50px",
+                  gap: 0, padding: "7px 12px",
+                  borderBottom: "1px solid #dde1e9",
+                  background: isActive ? "#fffbeb" : "#fff",
+                  borderLeft: isActive ? `3px solid ${ORANGE}` : "3px solid transparent",
+                }}>
+                  <span style={{ fontFamily: "'DM Mono',monospace", color: isActive ? ORANGE : RED, fontWeight: 700, fontSize: 11, alignSelf: "center" }}>{seqNum}</span>
+                  <div>
+                    <div style={{ fontWeight: 800, fontSize: 12, color: isActive ? "#d97706" : "#111827" }}>
+                      ZONA VIANANTS — {grp.zone_id}
+                    </div>
+                    <div style={{ fontSize: 10, color: "#9ca3af", fontFamily: "'DM Mono',monospace" }}>
+                      Aparca: {firstStop.pedestrian_zone?.walk_min ?? "?"} min a peu · {grp.stops.length} clients
+                    </div>
+                    {/* Sub-clients */}
+                    {grp.stops.map((sub, si) => (
+                      <div key={si} style={{ fontSize: 10, color: "#6b7280", paddingLeft: 6, marginTop: 2, borderLeft: "2px solid #e8eaed" }}>
+                        · {sub.client_nom}
+                      </div>
+                    ))}
+                  </div>
+                  <span style={{ textAlign: "right", fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", alignSelf: "start", paddingTop: 2 }}>
+                    {etaFirst ? minToHHMM(etaFirst.arrival) : firstStop.estimated_arrival}
+                  </span>
+                  <span style={{ textAlign: "right", fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", alignSelf: "start", paddingTop: 2 }}>
+                    {totalSvc} min
+                  </span>
+                  <span style={{ textAlign: "right", fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace", alignSelf: "start", paddingTop: 2 }}>
+                    {pallet1 != null && pallet2 != null ? `P${pallet1}-P${pallet2}` : "—"}
+                  </span>
+                </div>
+              </React.Fragment>
+            );
+          }
+
+          /* Normal single stop */
+          const s    = grp.stops[0];
+          const idx  = stops.indexOf(s);
+          const eta  = etas[idx];
+          const isActive = s.order === animStopOrd;
+          const isDone   = s.estat === "completat";
+          stopSeq++;
+          const seqNum = stopSeq;
+
+          return (
+            <div key={gi} style={{
+              display: "grid", gridTemplateColumns: "28px 1fr 56px 52px 50px",
+              gap: 0, padding: "7px 12px",
+              borderBottom: "1px solid #dde1e9",
+              background: isActive ? "#fff5f5" : isDone ? "#f0fdf4" : "#fff",
+              borderLeft: isActive ? `3px solid ${RED}` : isDone ? `3px solid #16a34a` : "3px solid transparent",
+              opacity: isDone ? 0.65 : 1,
+            }}>
+              <span style={{ fontFamily: "'DM Mono',monospace", color: isActive ? RED : isDone ? "#16a34a" : "#9ca3af", fontWeight: 700, fontSize: 11, alignSelf: "center" }}>{seqNum}</span>
+              <div style={{ minWidth: 0 }}>
+                <div style={{ fontWeight: 700, fontSize: 12, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.client_nom}
+                </div>
+                <div style={{ fontSize: 9, color: "#9ca3af", fontFamily: "'DM Mono',monospace", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {s.adresa}
+                </div>
+              </div>
+              <span style={{ textAlign: "right", fontSize: 11, color: isActive ? RED : "#6b7280", fontFamily: "'DM Mono',monospace", alignSelf: "center" }}>
+                {eta ? minToHHMM(eta.arrival) : s.estimated_arrival}
+              </span>
+              <span style={{ textAlign: "right", fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", alignSelf: "center" }}>
+                {s.service_min ?? "?"} min
+              </span>
+              <span style={{ textAlign: "right", fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace", alignSelf: "center" }}>
+                {s.truck_zone?.pallet_start != null
+                  ? `P${s.truck_zone.pallet_start}${s.truck_zone.pallet_end !== s.truck_zone.pallet_start ? `-P${s.truck_zone.pallet_end}` : ""}`
+                  : "—"}
+              </span>
+            </div>
+          );
+        })}
+      </div>
+
+      {/* Summary footer */}
+      <div style={{ borderTop: "1px solid #dde1e9", padding: "8px 12px", flexShrink: 0, background: "#f8f9fb" }}>
+        <div style={{ fontSize: 10, color: "#6b7280", fontFamily: "'DM Mono',monospace", lineHeight: 1.7 }}>
+          <div>Sortida: 08:00 &nbsp;·&nbsp; Retorn estimat: {returnMin ? minToHHMM(returnMin) : "—"}</div>
+          <div>Distancia total: {totalKm} km &nbsp;·&nbsp; Temps trajecte: {formatDuration(totalMin)}</div>
+          <div style={{ color: RED, fontWeight: 700 }}>
+            Temps de parada: {stops.reduce((s, st) => s + (st.service_min ?? 0), 0)} min
+          </div>
+          {kpis.vehicle_name && <div>Vehicle: {kpis.vehicle_name}</div>}
+        </div>
+        {allDone && (
+          <div style={{ marginTop: 6, padding: "5px 10px", background: "#f0fdf4", border: "1px solid #16a34a", borderRadius: 6, color: "#16a34a", fontWeight: 700, fontSize: 11, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.5px" }}>
+            RUTA COMPLETADA
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 /* ════════════════════════════════════════════════════════════════════════════════
-   DRIVER VIEW
+   DRIVER VIEW — two-panel layout
+   Left:  Full route sheet
+   Right: Leaflet map + animation controls
    ════════════════════════════════════════════════════════════════════════════════ */
 export default function Driver({ routeId }) {
-  const [route,        setRoute]        = useState(null);
-  const [stops,        setStops]        = useState([]);
-  const [done,         setDone]         = useState({});
-  const [currentIdx,   setCurrentIdx]   = useState(0);
-  const [roadLine,     setRoadLine]     = useState([]);
-  const [turnSteps,    setTurnSteps]    = useState([]);
-  const [stepIdx,      setStepIdx]      = useState(0);
-  const [drawerOpen,   setDrawerOpen]   = useState(true);
-  const [modal,        setModal]        = useState(false);
-  const [question,     setQuestion]     = useState("");
-  const [answer,       setAnswer]       = useState("");
-  const [asking,       setAsking]       = useState(false);
-  const [isAnimating,  setIsAnimating]  = useState(false);
-  const [animDone,     setAnimDone]     = useState(false);
-  const [animStopIdx,  setAnimStopIdx]  = useState(-1);   // índex a validStops, -1 = en moviment
-  const [animStopName, setAnimStopName] = useState("");
-  const [animStopOrd,  setAnimStopOrd]  = useState(-1);   // stop.order en pausa
-  const [osrmKm,       setOsrmKm]       = useState(null);
-  const [osrmMin,      setOsrmMin]      = useState(null);
-  const [error,        setError]        = useState(null);
+  const [route,       setRoute]       = useState(null);
+  const [stops,       setStops]       = useState([]);
+  const [done,        setDone]        = useState({});
+  const [roadLine,    setRoadLine]    = useState([]);
+  const [legDurations,setLegDurations]= useState(null);
+  const [osrmKm,      setOsrmKm]     = useState(null);
+  const [osrmMin,     setOsrmMin]     = useState(null);
+  const [isAnimating, setIsAnimating] = useState(false);
+  const [animDone,    setAnimDone]    = useState(false);
+  const [animStopIdx, setAnimStopIdx] = useState(-1);
+  const [animStopOrd, setAnimStopOrd] = useState(-1);
+  const [animStopName,setAnimStopName]= useState("");
+  const [modal,       setModal]       = useState(false);
+  const [question,    setQuestion]    = useState("");
+  const [answer,      setAnswer]      = useState("");
+  const [asking,      setAsking]      = useState(false);
+  const [error,       setError]       = useState(null);
 
-  /* Callbacks estables per al RouteController (sense re-renders innecessaris) */
+  /* Stable animation callbacks */
   const callbacksRef = useRef({ onStopReached: null, onDone: null });
   callbacksRef.current.onStopReached = (idx, name, order = -1) => {
     setAnimStopIdx(idx);
@@ -206,7 +426,7 @@ export default function Driver({ routeId }) {
       fetchOSRMRoute(s).then(osrm => {
         if (osrm) {
           setRoadLine(osrm.geometry);
-          setTurnSteps(osrm.steps);
+          setLegDurations(osrm.legDurations);
           setOsrmKm((osrm.distance_m / 1000).toFixed(1));
           setOsrmMin(Math.round(osrm.duration_s / 60));
         } else {
@@ -215,11 +435,6 @@ export default function Driver({ routeId }) {
       });
     }).catch(e => setError(e.message));
   }, [routeId]);
-
-  useEffect(() => {
-    const first = stops.findIndex(s => !done[s.order]);
-    setCurrentIdx(first >= 0 ? first : Math.max(0, stops.length - 1));
-  }, [done, stops]);
 
   const handleComplete = useCallback(async (stop) => {
     setDone(prev => ({ ...prev, [stop.order]: true }));
@@ -236,296 +451,239 @@ export default function Driver({ routeId }) {
     finally { setAsking(false); }
   };
 
-  if (error)  return <div style={{ padding: 32, color: "#ef5350", background: "#1a0505", margin: 24, borderRadius: 10 }}>⚠️ {error}</div>;
-  if (!route) return <div style={{ padding: 32, color: "#888" }}>Carregant ruta…</div>;
+  /* Stable reference — only recomputed when `stops` state changes, NOT on animation state changes */
+  /* Must be declared before any early returns to satisfy Rules of Hooks */
+  const validStops = useMemo(() => stops.filter(s => s.lat && s.lon), [stops]);
+  const allCoords  = useMemo(() => validStops.map(s => [s.lat, s.lon]), [validStops]);
 
-  const kpis        = route.kpis ?? {};
-  const pending     = stops.filter(s => !done[s.order]);
-  const current     = stops[currentIdx] ?? stops[0];
-  const allCoords   = stops.filter(s => s.lat && s.lon).map(s => [s.lat, s.lon]);
-  const currentTurn = turnSteps[stepIdx] || "";
-  const validStops  = stops.filter(s => s.lat && s.lon);
+  if (error) return (
+    <div style={{ padding: 32, color: "#b91c1c", background: "#fef2f2", margin: 24, borderRadius: 10, border: "1px solid #fca5a5" }}>
+      Error: {error}
+    </div>
+  );
+  if (!route) return <div style={{ padding: 32, color: "#6b7280" }}>Carregant ruta…</div>;
+  const currentStop = stops.find(s => !done[s.order]) ?? stops[0];
+  const allDone    = stops.length > 0 && stops.every(s => done[s.order]);
 
-  /* Minuts cap a hores/minuts per al missatge de finalització */
-  const formatDurada = (min) => {
-    if (!min) return "";
-    const h = Math.floor(min / 60);
-    const m = min % 60;
-    return h > 0 ? `${h}h ${m}min` : `${m}min`;
-  };
+  /* Unique parking locations count */
+  const uniqueParks = new Set();
+  stops.forEach(s => {
+    if (s.pedestrian_zone?.zone_id) uniqueParks.add(s.pedestrian_zone.zone_id);
+    else uniqueParks.add(`stop-${s.order}`);
+  });
+  const nParades = uniqueParks.size;
 
   return (
-    <div style={{ position: "relative", height: "calc(100vh - 48px)", overflow: "hidden", background: "#0a0a0a" }}>
+    <div style={{ display: "flex", height: "calc(100vh - 48px)", overflow: "hidden", background: "#f4f6f9" }}>
 
-      {/* ── Mapa a pantalla completa ── */}
-      {allCoords.length > 0 && (
-        <MapContainer center={allCoords[0]} zoom={14}
-          style={{ position: "absolute", inset: 0, height: "100%", width: "100%" }}
-          zoomControl={false}>
-          <TileLayer
-            url="https://{s}.basemaps.cartocdn.com/dark_all/{z}/{x}/{y}{r}.png"
-            attribution='&copy; OSM &copy; CARTO'
-          />
-          <FitBounds coords={[[DEPOT_LAT, DEPOT_LON], ...allCoords]} />
+      {/* ══ LEFT 46%: Route sheet ══ */}
+      <div style={{ width: "46%", borderRight: "1px solid #dde1e9", overflow: "hidden", display: "flex", flexDirection: "column", background: "#fff" }}>
+        <RouteSheet
+          stops={stops}
+          route={route}
+          osrmKm={osrmKm}
+          osrmMin={osrmMin}
+          legDurations={legDurations}
+          animStopOrd={animStopOrd}
+          allDone={allDone}
+        />
+      </div>
 
-          {/* Marcador dipòsit */}
-          <Marker position={[DEPOT_LAT, DEPOT_LON]} icon={L.divIcon({
-            html: '<div style="background:#1a1a1a;border:2px solid #E30613;color:#E30613;border-radius:4px;padding:2px 8px;font-size:10px;font-weight:900;white-space:nowrap;font-family:Barlow Condensed,sans-serif;letter-spacing:1px">DDI</div>',
-            className: "", iconAnchor: [16, 14],
-          })} />
+      {/* ══ RIGHT 54%: Map + controls ══ */}
+      <div style={{ flex: 1, display: "flex", flexDirection: "column", overflow: "hidden" }}>
 
-          {/* Ruta real OSRM */}
-          {roadLine.length > 1 && (
-            <Polyline positions={roadLine} color={RED} weight={4} opacity={0.8} />
+        {/* Map */}
+        <div style={{ flex: 1, position: "relative", overflow: "hidden" }}>
+          {allCoords.length > 0 && (
+            <MapContainer center={allCoords[0]} zoom={13}
+              style={{ position: "absolute", inset: 0, height: "100%", width: "100%" }}
+              zoomControl={false}>
+              <TileLayer
+                url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
+                attribution='&copy; OSM &copy; CARTO'
+              />
+              <FitBounds coords={[[DEPOT_LAT, DEPOT_LON], ...allCoords]} />
+
+              {/* Depot marker */}
+              <Marker position={[DEPOT_LAT, DEPOT_LON]} icon={L.divIcon({
+                html: '<div style="background:#fff;border:2px solid #E30613;color:#E30613;border-radius:4px;padding:2px 7px;font-size:10px;font-weight:900;white-space:nowrap;font-family:\'Barlow Condensed\',sans-serif;letter-spacing:1px;box-shadow:0 1px 6px rgba(0,0,0,.2)">DDI</div>',
+                className: "", iconAnchor: [14, 12],
+              })} />
+
+              {/* Road polyline */}
+              {roadLine.length > 1 && (
+                <Polyline positions={roadLine} color={RED} weight={3} opacity={0.75} />
+              )}
+
+              {/* Stop markers */}
+              {stops.map((s, i) => {
+                if (!s.lat || !s.lon) return null;
+                const isDone   = !!done[s.order];
+                const isPausing = s.order === animStopOrd && animStopIdx >= 0;
+                const isCurrent = s === currentStop;
+                const color = isDone ? "#9ca3af" : isPausing ? ORANGE : allDone ? "#16a34a" : isCurrent ? RED : "#2563eb";
+                const size  = isPausing ? 36 : isCurrent ? 32 : 24;
+                const icon  = isPausing ? makePulsingIcon(s.order + 1, size) : makeIcon(s.order + 1, color, size);
+                return (
+                  <Marker key={s.order} position={[s.lat, s.lon]} icon={icon}>
+                    <Popup>
+                      <strong>#{s.order + 1} {s.client_nom}</strong><br />
+                      {s.adresa}<br />
+                      Arr. estimada: {s.estimated_arrival}
+                    </Popup>
+                  </Marker>
+                );
+              })}
+
+              <RouteController
+                geometry={roadLine}
+                stops={validStops}
+                isAnimating={isAnimating}
+                callbacksRef={callbacksRef}
+              />
+            </MapContainer>
           )}
 
-          {/* Marcadors de parades */}
-          {stops.map((s, i) => {
-            if (!s.lat || !s.lon) return null;
-            const isCurrent  = i === currentIdx;
-            const isDone     = !!done[s.order];
-            const isPausing  = s.order === animStopOrd && animStopIdx >= 0;
-            const color = isDone ? "#444" : isPausing ? ORANGE : isCurrent ? RED : "#3498db";
-            const size  = isPausing ? 38 : isCurrent ? 34 : 26;
-            const icon  = isPausing ? makePulsingIcon(s.order + 1, size) : makeIcon(s.order + 1, color, size);
-            return (
-              <Marker key={s.order} position={[s.lat, s.lon]} icon={icon}>
-                <Popup>
-                  <strong>#{s.order + 1} {s.client_nom}</strong><br />
-                  {s.adresa}<br />
-                  Arr. estimada: {s.estimated_arrival}
-                </Popup>
-              </Marker>
-            );
-          })}
-
-          <RouteController
-            geometry={roadLine}
-            stops={validStops}
-            isAnimating={isAnimating}
-            callbacksRef={callbacksRef}
-          />
-        </MapContainer>
-      )}
-
-      {/* ── Indicador torn a torn (visible fora de l'animació) ── */}
-      {currentTurn && !isAnimating && (
-        <div style={{
-          position: "absolute", top: 12, left: 12, right: 68, zIndex: 1000,
-          background: "rgba(10,10,10,.92)", borderRadius: 10, padding: "10px 14px",
-          display: "flex", alignItems: "center", gap: 10, backdropFilter: "blur(4px)",
-        }}>
-          <span style={{ fontSize: 18 }}>↗</span>
-          <span style={{ color: "#f0f0f0", fontSize: 13, fontWeight: 600, flex: 1 }}>{currentTurn}</span>
-          <div style={{ display: "flex", gap: 4, flexShrink: 0 }}>
-            <button onClick={() => setStepIdx(i => Math.max(0, i - 1))}
-              style={{ background: "none", border: "1px solid #333", color: "#888", borderRadius: 5, padding: "2px 7px", cursor: "pointer", fontSize: 13 }}>‹</button>
-            <button onClick={() => setStepIdx(i => Math.min(turnSteps.length - 1, i + 1))}
-              style={{ background: "none", border: "1px solid #333", color: "#888", borderRadius: 5, padding: "2px 7px", cursor: "pointer", fontSize: 13 }}>›</button>
-          </div>
-        </div>
-      )}
-
-      {/* ── Barra de progrés de l'animació ── */}
-      {isAnimating && (
-        <div style={{
-          position: "absolute", top: 12, left: 12, right: 68, zIndex: 1000,
-          background: "rgba(10,10,10,.93)", borderRadius: 10, padding: "12px 14px",
-          backdropFilter: "blur(4px)",
-        }}>
-          {/* Títol + info parada actual */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 8 }}>
-            <span style={{ fontSize: 16 }}>🚛</span>
-            <span style={{ color: "#f0f0f0", fontWeight: 700, fontSize: 13, fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.5px" }}>
-              SIMULANT RUTA
-              {animStopIdx >= 0
-                ? ` · PARADA ${animStopIdx + 1} DE ${validStops.length}`
-                : " · EN TRÀNSIT"}
-            </span>
-          </div>
-          {/* Nom del client en pausa */}
-          {animStopIdx >= 0 && animStopName && (
-            <div style={{ fontSize: 12, color: ORANGE, fontWeight: 700, marginBottom: 6 }}>
-              ⏸ {animStopName}
-            </div>
-          )}
-          {/* Barra de 20s */}
-          <div style={{ background: "#1a1a1a", borderRadius: 4, height: 4, overflow: "hidden" }}>
-            <div style={{ width: "100%", background: animStopIdx >= 0 ? ORANGE : RED, height: 4, borderRadius: 4, animation: "progress-anim 20s linear forwards" }} />
-          </div>
-        </div>
-      )}
-
-      {/* ── Missatge de finalització ── */}
-      {animDone && !isAnimating && (
-        <div style={{
-          position: "absolute", top: 12, left: 12, right: 68, zIndex: 1000,
-          background: "rgba(13,31,13,.95)", border: "1px solid #2ecc71", borderRadius: 10,
-          padding: "10px 14px", color: "#2ecc71", fontWeight: 700, fontSize: 13,
-          backdropFilter: "blur(4px)",
-        }}>
-          ✓ Ruta completada · {osrmKm} km · temps estimat: {formatDurada(osrmMin)}
-        </div>
-      )}
-
-      {/* ── KPIs (dalt dreta) ── */}
-      <div style={{
-        position: "absolute", top: 12, right: 12, zIndex: 1000,
-        background: "rgba(10,10,10,.85)", borderRadius: 10, padding: "8px 12px",
-        backdropFilter: "blur(4px)",
-      }}>
-        <div style={{ color: "#555", fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
-          <div>Parades: <strong style={{ color: "#f0f0f0" }}>{pending.length}/{kpis.n_stops ?? "?"}</strong></div>
-          {osrmKm && <div>Ruta: <strong style={{ color: "#f0f0f0" }}>{osrmKm} km</strong></div>}
-        </div>
-      </div>
-
-      {/* ── Botó REPRODUIR / ATURAR ── */}
-      <div style={{ position: "absolute", bottom: 220, right: 16, zIndex: 1000 }}>
-        {!isAnimating ? (
-          <button onClick={() => { setIsAnimating(true); setAnimDone(false); setAnimStopIdx(-1); setAnimStopName(""); }} style={{
-            background: RED, color: "#fff", border: "none", borderRadius: "50%",
-            width: 54, height: 54, fontSize: 22, cursor: "pointer",
-            boxShadow: "0 4px 20px rgba(227,6,19,.5)",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>▶</button>
-        ) : (
-          <button onClick={() => setIsAnimating(false)} style={{
-            background: "#1a1a1a", color: "#f0f0f0", border: `2px solid ${RED}`, borderRadius: "50%",
-            width: 54, height: 54, fontSize: 18, cursor: "pointer",
-            display: "flex", alignItems: "center", justifyContent: "center",
-          }}>⏹</button>
-        )}
-      </div>
-
-      {/* ── Botó assistent ── */}
-      <div style={{ position: "absolute", bottom: 284, right: 16, zIndex: 1000 }}>
-        <button onClick={() => { setModal(true); setAnswer(""); }} style={{
-          background: "rgba(10,10,10,.85)", color: "#888", border: "1px solid #333", borderRadius: "50%",
-          width: 44, height: 44, fontSize: 18, cursor: "pointer",
-          display: "flex", alignItems: "center", justifyContent: "center",
-        }}>💬</button>
-      </div>
-
-      {/* ── Calaix inferior ── */}
-      {current && (
-        <div style={{
-          position: "absolute", bottom: 0, left: 0, right: 0, zIndex: 500,
-          background: "#111", borderRadius: "16px 16px 0 0",
-          boxShadow: "0 -4px 24px rgba(0,0,0,.7)",
-          maxHeight: drawerOpen ? "42%" : "58px",
-          overflow: "hidden", transition: "max-height .3s ease",
-        }}>
-          <div onClick={() => setDrawerOpen(o => !o)} style={{
-            padding: "12px 16px 8px", cursor: "pointer",
-            display: "flex", alignItems: "center", gap: 10, flexShrink: 0,
-          }}>
-            <span style={{ background: RED, color: "#fff", borderRadius: 6, padding: "2px 10px", fontWeight: 900, fontSize: 14, fontFamily: "'DM Mono', monospace", flexShrink: 0 }}>
-              #{(current.order + 1).toString().padStart(2, "0")}
-            </span>
-            <span style={{ fontWeight: 700, fontSize: 15, color: "#f0f0f0", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
-              {current.client_nom}
-            </span>
-            {done[current.order] && <span style={{ color: "#2ecc71", flexShrink: 0 }}>✓</span>}
-            <span style={{ color: "#444", fontSize: 14, flexShrink: 0 }}>{drawerOpen ? "▼" : "▲"}</span>
-          </div>
-
-          <div style={{ padding: "0 16px 16px", overflowY: "auto" }}>
-            <div style={{ fontSize: 12, color: "#555", marginBottom: 10 }}>{current.adresa}</div>
-            <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 12 }}>
-              {current.time_window && (
-                <span style={{ background: "#1a1a1a", color: "#888", borderRadius: 20, padding: "3px 10px", fontSize: 11 }}>
-                  🕐 {current.time_window.open} – {current.time_window.close}
-                </span>
-              )}
-              <span style={{ background: "#1a1a1a", color: "#888", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontFamily: "'DM Mono', monospace" }}>
-                Arr. {current.estimated_arrival}
-              </span>
-              {current.pedestrian_zone && (
-                <span style={{ background: "#7a4800", color: "#f39c12", borderRadius: 20, padding: "3px 10px", fontSize: 11, fontWeight: 600 }}>
-                  🚶 Zona vianants
-                </span>
-              )}
-            </div>
-            {current.pedestrian_zone && (
-              <div style={{ background: "#1a1000", border: "1px solid #7a4800", borderRadius: 8, padding: "7px 10px", fontSize: 12, color: "#f39c12", marginBottom: 12 }}>
-                🅿️ Aparca i camina <strong>{current.pedestrian_zone.walk_min} min</strong> fins al client
+          {/* Animation overlay — top bar */}
+          {isAnimating && (
+            <div style={{
+              position: "absolute", top: 10, left: 10, right: 120, zIndex: 1000,
+              background: "rgba(255,255,255,.94)", borderRadius: 8, padding: "9px 12px",
+              backdropFilter: "blur(4px)", border: "1px solid #dde1e9",
+              boxShadow: "0 2px 12px rgba(0,0,0,.1)",
+            }}>
+              <div style={{ color: "#111827", fontWeight: 700, fontSize: 12, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.5px", marginBottom: 6 }}>
+                SIMULANT RUTA
+                {animStopIdx >= 0 ? ` · PARADA ${animStopIdx + 1} DE ${validStops.length}` : " · EN TRANSIT"}
               </div>
-            )}
-            {!done[current.order] ? (
-              <button onClick={() => handleComplete(current)} style={{
-                width: "100%", padding: "13px", background: RED, color: "#fff",
-                border: "none", borderRadius: 8, fontWeight: 900, fontSize: 16, cursor: "pointer",
-                fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "1.5px",
+              {animStopIdx >= 0 && animStopName && (
+                <div style={{ fontSize: 11, color: "#d97706", fontWeight: 700, marginBottom: 5 }}>
+                  {animStopName}
+                </div>
+              )}
+              <div style={{ background: "#eef0f4", borderRadius: 3, height: 3, overflow: "hidden" }}>
+                <div style={{ width: "100%", background: animStopIdx >= 0 ? ORANGE : RED, height: 3, animation: "progress-anim 20s linear forwards" }} />
+              </div>
+            </div>
+          )}
+
+          {/* Completion banner */}
+          {animDone && !isAnimating && (
+            <div style={{
+              position: "absolute", top: 10, left: 10, right: 120, zIndex: 1000,
+              background: "rgba(240,253,244,.97)", border: "1px solid #16a34a", borderRadius: 8,
+              padding: "9px 12px", color: "#16a34a", fontWeight: 700, fontSize: 12,
+              backdropFilter: "blur(4px)", boxShadow: "0 2px 12px rgba(0,0,0,.08)",
+            }}>
+              Simulacio completada · {osrmKm} km · {formatDuration(osrmMin)}
+            </div>
+          )}
+
+          {/* KPIs top-right */}
+          <div style={{ position: "absolute", top: 10, right: 10, zIndex: 999, background: "rgba(255,255,255,.92)", borderRadius: 8, padding: "7px 10px", backdropFilter: "blur(4px)", border: "1px solid #dde1e9", boxShadow: "0 1px 6px rgba(0,0,0,.08)" }}>
+            <div style={{ fontSize: 10, color: "#6b7280", fontFamily: "'DM Mono',monospace", lineHeight: 1.7 }}>
+              <div>Parades: <strong style={{ color: "#111827" }}>{nParades}</strong></div>
+              {osrmKm && <div>Km: <strong style={{ color: "#111827" }}>{osrmKm}</strong></div>}
+            </div>
+          </div>
+        </div>
+
+        {/* ── Controls bar ── */}
+        <div style={{ background: "#fff", borderTop: "1px solid #dde1e9", padding: "10px 16px", flexShrink: 0 }}>
+
+          {/* Current stop card */}
+          {currentStop && !allDone && (
+            <div style={{ marginBottom: 10, padding: "9px 12px", background: "#f8f9fb", borderRadius: 8, border: `1.5px solid ${animStopOrd === currentStop.order ? ORANGE : "#dde1e9"}` }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                <span style={{ background: RED, color: "#fff", borderRadius: 4, padding: "1px 8px", fontWeight: 900, fontSize: 12, fontFamily: "'DM Mono',monospace" }}>
+                  #{(currentStop.order + 1).toString().padStart(2,"0")}
+                </span>
+                <span style={{ fontWeight: 700, fontSize: 13, color: "#111827", flex: 1, overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                  {currentStop.client_nom}
+                </span>
+                <span style={{ fontFamily: "'DM Mono',monospace", color: "#9ca3af", fontSize: 11 }}>
+                  {currentStop.estimated_arrival}
+                </span>
+              </div>
+              <div style={{ fontSize: 11, color: "#6b7280", marginBottom: 8 }}>{currentStop.adresa}</div>
+              {currentStop.pedestrian_zone && (
+                <div style={{ fontSize: 11, color: "#d97706", background: "#fffbeb", borderRadius: 5, padding: "4px 8px", marginBottom: 8, border: "1px solid #fde68a" }}>
+                  Zona vianants — aparca i camina {currentStop.pedestrian_zone.walk_min} min
+                </div>
+              )}
+              <button onClick={() => handleComplete(currentStop)} style={{
+                width: "100%", padding: "8px 0", background: RED, color: "#fff",
+                border: "none", borderRadius: 6, fontWeight: 900, fontSize: 14, cursor: "pointer",
+                fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1.5px",
               }}>
-                ✓ ENTREGAT
+                ENTREGAT →
+              </button>
+            </div>
+          )}
+          {allDone && (
+            <div style={{ marginBottom: 10, padding: "9px 12px", background: "#f0fdf4", border: "1px solid #16a34a", borderRadius: 8, color: "#16a34a", fontWeight: 700, fontSize: 13, textAlign: "center", fontFamily: "'Barlow Condensed',sans-serif" }}>
+              TOTES LES ENTREGUES COMPLETADES
+            </div>
+          )}
+
+          {/* Animation + assistant buttons */}
+          <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+            {!isAnimating ? (
+              <button onClick={() => { setIsAnimating(true); setAnimDone(false); setAnimStopIdx(-1); setAnimStopName(""); setAnimStopOrd(-1); }} style={{
+                flex: 1, padding: "10px 0", background: RED, color: "#fff", border: "none", borderRadius: 7,
+                fontWeight: 900, fontSize: 14, cursor: "pointer",
+                fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1.5px",
+              }}>
+                SIMULAR RECORREGUT
               </button>
             ) : (
-              <div style={{ textAlign: "center", color: "#2ecc71", fontWeight: 800, fontSize: 15 }}>
-                ✅ Entrega completada
-              </div>
+              <button onClick={() => setIsAnimating(false)} style={{
+                flex: 1, padding: "10px 0", background: "#fff", color: RED,
+                border: `2px solid ${RED}`, borderRadius: 7, fontWeight: 900, fontSize: 14, cursor: "pointer",
+                fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1.5px",
+              }}>
+                ATURAR
+              </button>
             )}
+            <button onClick={() => { setModal(true); setAnswer(""); }} style={{
+              padding: "10px 14px", background: "#fff", color: "#6b7280",
+              border: "1px solid #dde1e9", borderRadius: 7, fontWeight: 700, fontSize: 12, cursor: "pointer",
+              fontFamily: "'Barlow Condensed',sans-serif", whiteSpace: "nowrap",
+            }}>
+              ASSISTENT
+            </button>
           </div>
         </div>
-      )}
+      </div>
 
-      {/* ── Píndoles de parades pendents ── */}
-      {pending.length > 0 && (
-        <div style={{
-          position: "absolute", bottom: drawerOpen ? 210 : 64, left: 12, zIndex: 400,
-          display: "flex", flexDirection: "column", gap: 6, transition: "bottom .3s",
-        }}>
-          {pending.slice(0, 4).map(s => {
-            const idx      = stops.indexOf(s);
-            const isActive = idx === currentIdx;
-            const isPausing = s.order === animStopOrd && animStopIdx >= 0;
-            return (
-              <div key={s.order} onClick={() => setCurrentIdx(idx)} style={{
-                background: isPausing ? "rgba(243,156,18,.85)" : isActive ? "rgba(227,6,19,.9)" : "rgba(10,10,10,.85)",
-                border: `1px solid ${isPausing ? ORANGE : isActive ? RED : "#333"}`,
-                borderRadius: 8, padding: "5px 10px", cursor: "pointer",
-                display: "flex", alignItems: "center", gap: 7, backdropFilter: "blur(4px)",
-              }}>
-                <span style={{ color: "#fff", fontWeight: 700, fontSize: 12, fontFamily: "'DM Mono', monospace" }}>
-                  #{s.order + 1}
-                </span>
-                <span style={{ color: "#fff", fontSize: 12, fontWeight: 600 }}>
-                  {s.client_nom.split(" ").slice(0, 2).join(" ")}
-                </span>
-                {isPausing && <span style={{ fontSize: 12 }}>⏸</span>}
-              </div>
-            );
-          })}
-        </div>
-      )}
-
-      {/* ── Modal assistent ── */}
+      {/* ── Gemini assistant modal ── */}
       {modal && (
-        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.8)", display: "flex", alignItems: "flex-end", justifyContent: "center", zIndex: 2000 }}>
-          <div style={{ background: "#1a1a1a", borderRadius: "18px 18px 0 0", padding: "22px 20px", width: "100%", maxWidth: 520 }}>
-            <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 12, color: "#f0f0f0", fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "1px" }}>
-              💬 ASSISTENT GEMINI
+        <div style={{ position: "fixed", inset: 0, background: "rgba(0,0,0,.45)", zIndex: 5000, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <div style={{ background: "#fff", borderRadius: 12, padding: 24, width: 420, maxWidth: "90vw", border: "1px solid #dde1e9", boxShadow: "0 8px 32px rgba(0,0,0,.18)" }}>
+            <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900, fontSize: 18, color: "#111827", letterSpacing: "1px", marginBottom: 16 }}>
+              ASSISTENT GEMINI
             </div>
             <textarea value={question} onChange={e => setQuestion(e.target.value)}
-              onKeyDown={e => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); handleAsk(); } }}
-              placeholder="ex: Quina és la propera parada? On aparco?"
-              rows={3} style={{ width: "100%", border: "1.5px solid #333", borderRadius: 9, padding: 10, fontSize: 13, resize: "none", outline: "none", boxSizing: "border-box", background: "#111", color: "#f0f0f0" }} />
-            {asking && <div style={{ color: "#888", fontSize: 12, padding: "6px 0" }}>⏳ Consultant Gemini…</div>}
-            {answer && !asking && (
-              <div style={{ background: "#111", border: `1.5px solid ${RED}`, borderRadius: 9, padding: "10px 12px", fontSize: 13, color: "#f0f0f0", margin: "10px 0", lineHeight: 1.6, whiteSpace: "pre-wrap" }}>
-                🤖 {answer}
+              placeholder="Ex: Quina es la millor ruta fins al seguent client?"
+              style={{ width: "100%", minHeight: 70, background: "#f8f9fb", border: "1.5px solid #dde1e9", borderRadius: 7, padding: "8px 10px", color: "#111827", fontSize: 13, resize: "vertical", fontFamily: "'Barlow',sans-serif" }}
+            />
+            {answer && (
+              <div style={{ background: "#f8f9fb", borderRadius: 7, padding: "10px 12px", fontSize: 13, color: "#374151", marginTop: 10, maxHeight: 160, overflowY: "auto", lineHeight: 1.5, border: "1px solid #dde1e9" }}>
+                {answer}
               </div>
             )}
-            <div style={{ display: "flex", gap: 8, marginTop: 10 }}>
-              <button onClick={handleAsk} disabled={asking || !question.trim()} style={{
-                flex: 1, background: asking ? "#333" : RED, color: "#fff",
-                border: "none", borderRadius: 8, padding: 11, fontWeight: 700,
-                cursor: asking ? "not-allowed" : "pointer",
-                fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.5px",
+            <div style={{ display: "flex", gap: 8, marginTop: 12 }}>
+              <button onClick={handleAsk} disabled={asking} style={{
+                flex: 1, padding: "10px 0", background: asking ? "#9ca3af" : RED, color: "#fff",
+                border: "none", borderRadius: 7, fontWeight: 900, fontSize: 14, cursor: asking ? "wait" : "pointer",
+                fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "1px",
               }}>
-                {asking ? "Esperant…" : "ENVIAR"}
+                {asking ? "CONSULTANT..." : "PREGUNTAR"}
               </button>
-              <button onClick={() => setModal(false)} style={{ flex: 1, background: "#222", color: "#f0f0f0", border: "none", borderRadius: 8, padding: 11, fontWeight: 700, cursor: "pointer" }}>
+              <button onClick={() => { setModal(false); setAnswer(""); setQuestion(""); }} style={{
+                padding: "10px 16px", background: "#fff", color: "#6b7280", border: "1px solid #dde1e9",
+                borderRadius: 7, fontWeight: 700, cursor: "pointer", fontSize: 13,
+              }}>
                 Tancar
               </button>
             </div>

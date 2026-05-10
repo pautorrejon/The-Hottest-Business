@@ -3,22 +3,23 @@
 *, *::before, *::after { box-sizing: border-box; }
 
 :root {
-  --red: #E30613;
-  --red-dark: #a50410;
-  --black: #0f0f0f;
-  --dark: #1a1a1a;
-  --mid: #2a2a2a;
-  --border: #333;
-  --text: #f0f0f0;
-  --muted: #888;
-  --green: #2ecc71;
-  --orange: #f39c12;
-  --blue: #3498db;
+  --red:      #E30613;
+  --red-dark: #b5040f;
+  --bg:       #f4f6f9;
+  --surface:  #ffffff;
+  --surface2: #eef0f4;
+  --border:   #dde1e9;
+  --text:     #111827;
+  --muted:    #6b7280;
+  --faint:    #9ca3af;
+  --green:    #16a34a;
+  --orange:   #d97706;
+  --blue:     #2563eb;
 }
 
 body {
   margin: 0;
-  background: var(--black);
+  background: var(--bg);
   color: var(--text);
   font-family: 'Barlow', sans-serif;
   -webkit-font-smoothing: antialiased;
@@ -28,17 +29,17 @@ input, select, textarea, button { font-family: inherit; }
 
 /* Leaflet */
 .leaflet-container { z-index: 0; }
-.leaflet-control-attribution { font-size: 9px !important; background: rgba(0,0,0,.6) !important; color: #888 !important; }
-.leaflet-control-zoom a { background: #1a1a1a !important; color: #f0f0f0 !important; border-color: #333 !important; }
+.leaflet-control-attribution { font-size: 9px !important; background: rgba(0,0,0,.55) !important; color: #aaa !important; }
+.leaflet-control-zoom a { background: #fff !important; color: #333 !important; border-color: #ccc !important; }
 
 /* Animations */
-@keyframes spin     { to { transform: rotate(360deg); } }
-@keyframes fadeIn   { from { opacity: 0; transform: translateY(8px); } to { opacity: 1; transform: none; } }
-@keyframes toast-in { from { opacity: 0; transform: translateX(120%); } to { opacity: 1; transform: translateX(0); } }
+@keyframes spin       { to { transform: rotate(360deg); } }
+@keyframes fadeIn     { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+@keyframes toast-in   { from { opacity: 0; transform: translateX(120%); } to { opacity: 1; transform: translateX(0); } }
 @keyframes progress-anim { from { width: 0% } to { width: 100% } }
-@keyframes pulse    { 0%,100% { opacity: 1; } 50% { opacity: .5; } }
+@keyframes pulse      { 0%,100% { opacity: 1; } 50% { opacity: .45; } }
 
 /* Scrollbar */
 ::-webkit-scrollbar { width: 5px; height: 5px; }
-::-webkit-scrollbar-track { background: var(--dark); }
-::-webkit-scrollbar-thumb { background: #444; border-radius: 3px; }
+::-webkit-scrollbar-track { background: var(--surface2); }
+::-webkit-scrollbar-thumb { background: #c4c9d4; border-radius: 3px; }

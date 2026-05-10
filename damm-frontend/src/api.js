@@ -8,6 +8,7 @@ export const getWarehouse    = (id)         => GET(`/api/warehouse/${id}`);
 export const postAssistant   = (rid, q)     => POST("/api/assistant", { route_id: rid, question: q });
 export const getProducts     = ()           => GET("/api/products");
 export const getClients      = ()           => GET("/api/clients");
+export const getDemoRoute    = ()           => GET("/api/demo/granollers");
 
 export async function putStop(stopId, estat) {
   const res = await fetch(`${BASE}/api/stop/${stopId}`, {

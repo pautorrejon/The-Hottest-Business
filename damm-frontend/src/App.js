@@ -71,7 +71,7 @@ function AppInner({ routeId, vehicleType, saveRoute, onResetFn, resetKey, toast 
   const navigate = useNavigate();
   const handleReset = useCallback(() => onResetFn(navigate), [navigate, onResetFn]);
   return (
-    <div style={{ minHeight: "100vh", background: "#0f0f0f" }}>
+    <div style={{ minHeight: "100vh", background: "#f4f6f9" }}>
       <Header onReset={handleReset} />
       {toast && <Toast msg={toast} />}
       <Routes>

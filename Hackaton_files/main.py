@@ -104,19 +104,19 @@ ZONE_COLORS = [
 # ── VEHICLE FLEET ─────────────────────────────────────────────────────────────
 FLEET = {
     "furgoneta": {
-        "name": "Furgoneta", "emoji": "🚐",
+        "name": "Furgoneta",
         "L_cm": 300, "W_cm": 170, "H_cm": 170,
-        "max_kg": 1500, "max_vol_l": 1700, "pallets": 3,
+        "max_kg": 1500, "max_vol_l": 3000, "pallets": 3,
     },
     "camio_6": {
-        "name": "Camió 6 t", "emoji": "🚛",
+        "name": "Camio 6 t",
         "L_cm": 450, "W_cm": 210, "H_cm": 210,
-        "max_kg": 4000, "max_vol_l": 5000, "pallets": 6,
+        "max_kg": 5000, "max_vol_l": 9000, "pallets": 6,
     },
     "camio_8": {
-        "name": "Camió 8 t", "emoji": "🚚",
+        "name": "Camio 8 t",
         "L_cm": 600, "W_cm": 220, "H_cm": 220,
-        "max_kg": 8000, "max_vol_l": 9000, "pallets": 8,
+        "max_kg": 8000, "max_vol_l": 14000, "pallets": 8,
     },
 }
 
@@ -566,6 +566,7 @@ def optimize(body: Optional[OptimizeRequest] = None):
         vehicle_type = assign_vehicle(total_kg, total_vol_l)
         vehicle      = FLEET[vehicle_type]
         capacity_pct = round(total_kg / vehicle["max_kg"] * 100, 1)
+        print(f"Route total: {total_kg:.1f} kg, {total_vol_l/1000:.3f} m³ → assigned: {vehicle_type}")
 
         kpis = {
             "total_km"    : round(total_km, 2),
@@ -575,7 +576,6 @@ def optimize(body: Optional[OptimizeRequest] = None):
             "n_clusters"  : len(clusters),
             "vehicle_type": vehicle_type,
             "vehicle_name": vehicle["name"],
-            "vehicle_emoji": vehicle["emoji"],
             "pallets_used": min(len(all_stops), vehicle["pallets"]),
             "pallets_total": vehicle["pallets"],
             "capacity_pct": capacity_pct,
@@ -754,6 +754,29 @@ def pack_truck(req: PackRequest):
                 "color"       : stop.get("color", "#777"),
             })
 
+        # ── Pallet assignments (proportional to boxes_n) ─────────────────────
+        vtype_for_pallets = route.get("kpis", {}).get("vehicle_type", "camio_8")
+        total_pallets_avail = FLEET.get(vtype_for_pallets, FLEET["camio_8"])["pallets"]
+        total_boxes_all = sum(z["boxes_n"] for z in truck_zones) or 1
+
+        cursor_pallet = 1
+        for z in truck_zones:
+            frac   = z["boxes_n"] / total_boxes_all
+            n_p    = max(1, round(frac * total_pallets_avail))
+            z["pallet_start"] = cursor_pallet
+            z["pallet_end"]   = cursor_pallet + n_p - 1
+            z["n_pallets"]    = n_p
+            cursor_pallet    += n_p
+
+        # Scale down if we over-assigned
+        while cursor_pallet - 1 > total_pallets_avail:
+            largest = max(truck_zones, key=lambda z: z["n_pallets"])
+            if largest["n_pallets"] <= 1:
+                break
+            largest["n_pallets"] -= 1
+            largest["pallet_end"] -= 1
+            cursor_pallet -= 1
+
         # ── KPIs ──────────────────────────────────────────────────────────────
         truck_vol_cm3    = TRUCK_L_CM * TRUCK_W_CM * TRUCK_H_CM
         efficiency_pct   = round(vol_used_cm3 / truck_vol_cm3 * 100, 1)
@@ -763,14 +786,17 @@ def pack_truck(req: PackRequest):
         zones_delivery = list(reversed(truck_zones))
         zone_by_client = {z["client_nom"]: z for z in zones_delivery}
 
-        # Stamp truck zone info onto each stop
+        # Stamp truck zone + pallet info onto each stop
         for stop in stops:
             z = zone_by_client.get(stop["client_nom"])
             if z:
                 stop["zone_truck_cm"] = {
-                    "x_start": z["zone_x_start"],
-                    "x_end"  : z["zone_x_end"],
-                    "color"  : z["color"],
+                    "x_start"    : z["zone_x_start"],
+                    "x_end"      : z["zone_x_end"],
+                    "color"      : z["color"],
+                    "pallet_start": z.get("pallet_start"),
+                    "pallet_end"  : z.get("pallet_end"),
+                    "n_pallets"   : z.get("n_pallets"),
                 }
 
         truck_loading = {
@@ -840,6 +866,7 @@ def get_route(route_id: str):
                 },
                 "estimated_arrival"  : min_to_str(arr),
                 "estimated_departure": min_to_str(dep),
+                "service_min"        : stop.get("temps_servei_min", stop.get("service_min", 5)),
                 "weight_kg"          : stop.get("weight_kg", 0),
                 "estat"              : stop.get("estat", "pending"),
                 "pedestrian_zone"    : {
@@ -850,10 +877,13 @@ def get_route(route_id: str):
                     "note"       : f"Aparca i camina {pz['walk_min']} min fins al client",
                 } if pz else None,
                 "truck_zone"         : {
-                    "x_start_cm": zone["x_start"],
-                    "x_end_cm"  : zone["x_end"],
-                    "color"     : zone["color"],
-                    "note"      : f"Caixes entre {zone['x_start']}–{zone['x_end']} cm del camió",
+                    "x_start_cm"  : zone["x_start"],
+                    "x_end_cm"    : zone["x_end"],
+                    "color"       : zone["color"],
+                    "pallet_start": zone.get("pallet_start"),
+                    "pallet_end"  : zone.get("pallet_end"),
+                    "n_pallets"   : zone.get("n_pallets"),
+                    "note"        : f"Caixes entre {zone['x_start']}–{zone['x_end']} cm del camio",
                 } if zone else None,
             })
 
@@ -1005,23 +1035,26 @@ def warehouse(route_id: str):
             zone = zone_by_client.get(nom, {})
 
             # Build per-product lines for the warehouse picker
-            product_lines = []
-            for eid in stop.get("orders", []):
-                order = orders.get(eid)
-                if not order:
-                    continue
-                for linia in order.get("linies", []):
-                    prod = products.get(linia["material"], {})
-                    product_lines.append({
-                        "codi"     : linia["material"],
-                        "nom"      : linia.get("nom", linia["material"]),
-                        "quantitat": linia.get("quantitat", 0),
-                        "unitat"   : linia.get("unitat", "CAJ"),
-                        "pes_kg"   : round(linia.get("pes_kg", 0), 1),
-                        "llarg_cm" : prod.get("llarg_cm", 0),
-                        "ample_cm" : prod.get("ample_cm", 0),
-                        "alt_cm"   : prod.get("alt_cm",   0),
-                    })
+            # Prefer embedded product_lines (demo mode), else look up from DB orders
+            product_lines = stop.get("product_lines")
+            if not product_lines:
+                product_lines = []
+                for eid in stop.get("orders", []):
+                    order = orders.get(eid)
+                    if not order:
+                        continue
+                    for linia in order.get("linies", []):
+                        prod = products.get(linia["material"], {})
+                        product_lines.append({
+                            "codi"     : linia["material"],
+                            "nom"      : linia.get("nom", linia["material"]),
+                            "quantitat": linia.get("quantitat", 0),
+                            "unitat"   : linia.get("unitat", "CAJ"),
+                            "pes_kg"   : round(linia.get("pes_kg", 0), 1),
+                            "llarg_cm" : prod.get("llarg_cm", 0),
+                            "ample_cm" : prod.get("ample_cm", 0),
+                            "alt_cm"   : prod.get("alt_cm",   0),
+                        })
 
             pz = stop.get("pedestrian_zone")
             checklist.append({
@@ -1222,6 +1255,279 @@ def get_clients():
             })
 
         return {"clients": result}
+    except Exception as e:
+        raise HTTPException(500, str(e))
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# DEMO · GET /api/demo/granollers
+# ════════════════════════════════════════════════════════════════════════════════
+
+# Pre-computed demo route data — DR0011 · 02/02/2026 · 13 clients · 9 parades
+_DEMO_STOPS_TEMPLATE = [
+    # order, client_nom, carrer, cp, lat, lon, service_min, boxes_n, weight_kg, pz_id, pz_walk, pz_park_lat, pz_park_lon, products
+    (0,  "EL MENÚ",            "Carrer de Ponent 12",               "08401", 41.6095, 2.2858, 20, 10,  70.0, None,          0, None,    None,
+     [("ED13","ESTRELLA DAMM 1/3 RET. PP",1,"CAJ",14.0),("VE32SP","AGUA VERI 1,5L PET 12U",2,"CAJ",18.0),
+      ("0LT0033","LETONA GRAN CREME 1,5L 6U",2,"CAJ",12.0),("0RF0019","COCA COLA LATA 33CL 24U",1,"CAJ",8.0),
+      ("0RF0079","COCA COLA ZERO LATA 33CL 24U",1,"CAJ",8.0),("0LT0090","LETONA SEMI SIN LACTOSA 1L 6U",1,"CAJ",6.0),
+      ("VE12SP","AGUA VERI 1/2 PET 24U",1,"CAJ",12.0)]),
+    (1,  "BAR MERCADO",        "Plaça Caserna s/n",                 "08401", 41.6090, 2.2860, 25, 12,  80.0, None,          0, None,    None,
+     [("0AG0039","FONT D.OR NATURAL 1,5L PET 6U",4,"CAJ",24.0),("0LT0103","YOSOY AVENA BARISTA 1L 6U",1,"CAJ",6.0),
+      ("0ZU0031","JUVER NECTAR MELOCOTON 20CL 24U",1,"CAJ",8.0),("VE13SP","AGUA VERI 1/3 PET 35U",1,"CAJ",12.0),
+      ("0RF0482","TRINA NARANJA SLEEK 33CL 24U",1,"CAJ",8.0),("0AG0183","VICHY CATALAN GAS 30CL 24U",1,"CAJ",7.0),
+      ("0AM0229","DOMESOL ACEITE DE GIRASOL 5L",1,"UN",5.0),("0AM1281","BARGALLO OLIVA SANSA 5L",1,"UN",5.0)]),
+    (2,  "CAFE SANT ROC",      "Carrer de Sant Roc 5",              "08400", 41.6085, 2.2880, 35, 18, 120.0, None,          0, None,    None,
+     [("ED13","ESTRELLA DAMM 1/3 RET. PP",4,"CAJ",56.0),("VO13","VOLL-DAMM 1/3 RET.",1,"CAJ",14.0),
+      ("EC13P6","DAURA DAMM 1/3 SR 6U",1,"CAJ",7.0),("0AG0183","VICHY CATALAN GAS 30CL 24U",1,"CAJ",7.0),
+      ("0LT0090","LETONA SEMI SIN LACTOSA 1L 6U",1,"CAJ",6.0),("0LT0034","LETONA SEMI 1,5L 6U",3,"CAJ",18.0),
+      ("0VE1410","ALLUE CAVA BRUT NATURE 75CL 6U",1,"CAJ",8.0),("0AM1167","MARINAS PATATAS OLIVA 47G 10U",2,"CAJ",4.0)]),
+    (3,  "PA TONET",           "Plaça de la Porxada 3",             "08401", 41.6080, 2.2872, 32, 22, 160.0, "PZ_CENTRE",   6, 41.6074, 2.2876,
+     [("VE32SP","AGUA VERI 1,5L PET 12U",2,"CAJ",18.0),("0LT0009","LETONA GRAN CREME 1L VR 12U",5,"CAJ",60.0),
+      ("0LT0032","CACAOLAT VIDRIO 20CL 30U",2,"CAJ",18.0),("0RF0200","COCA COLA ZERO VR23,7 24U",1,"CAJ",8.0),
+      ("0RF0287","COCA COLA VR237 24U",1,"CAJ",8.0),("0ZU0020","GRANINI MELOCOTON 20CL 24U",2,"CAJ",12.0),
+      ("0ZU0024","GRANINI PINYA 20CL 24U",2,"CAJ",12.0),("0RF0489","SCHWEPPES TONICA 20CL 24U",1,"CAJ",8.0),
+      ("0AM1167","MARINAS PATATAS OLIVA 47G 10U",1,"CAJ",2.0),("0AG0182","VICHY CATALAN SYSPACK 30CL 24U",1,"CAJ",7.0),
+      ("0LT0103","YOSOY AVENA BARISTA 1L 6U",4,"CAJ",24.0)]),
+    (4,  "CASA FONDA EUROPA",  "Carrer Anselm Clavé 1",             "08402", 41.6065, 2.2885, 40, 35, 280.0, "PZ_CENTRE",   6, 41.6074, 2.2876,
+     [("0LT0033","LETONA GRAN CREME 1,5L 6U",14,"CAJ",84.0),("0AM3864","FRIMASOL ACEITE GIRASOL 25L",2,"UN",50.0),
+      ("0AM3989","SABOR DEL SUR ACEITE OLIVA 5L",6,"UN",30.0),("0AM5310","BARGALLO OLI FREGIR 20L",4,"UN",80.0),
+      ("0AM0302","AZUCARERA AZUCAR 25KG",2,"UN",50.0),("0AM0172","GALLO PAN RALLADO 5KG",2,"UN",10.0),
+      ("0AM0451","GALLO HARINA DE TRIGO 5KG",6,"UN",30.0),("0AM0099","ORLANDO TOMATE TRITURADO 5KG",3,"UN",15.0),
+      ("ED13","ESTRELLA DAMM 1/3 RET. PP",1,"CAJ",14.0),("VO13","VOLL-DAMM 1/3 RET.",1,"CAJ",14.0),
+      ("0AG0011","VICHY CATALAN GAS 1/2 20U",7,"CAJ",42.0),("0LT0103","YOSOY AVENA BARISTA 1L 6U",2,"CAJ",12.0)]),
+    (5,  "Platillos",          "Plaça de Pau Casals 14",            "08402", 41.6067, 2.2901, 33, 12,  85.0, "PZ_CENTRE",   6, 41.6074, 2.2876,
+     [("FDL13","FREE DAMM LIMON 1/3 RET.",2,"CAJ",28.0),("FDT13","FREE DAMM TOSTADA 1/3 RET.",2,"CAJ",28.0),
+      ("0LT0033","LETONA GRAN CREME 1,5L 6U",1,"CAJ",6.0),("0AM3864","FRIMASOL ACEITE GIRASOL 25L",1,"UN",25.0),
+      ("0AM0362","REDONDO COCTEL ACEITUNAS 9KG",1,"UN",9.0),("0LM0010","GC SERVILLETAS 2C 40x40 100U",10,"UN",3.0),
+      ("0LM0099","BALNIC LAVAVAJILLAS MAQ. 6KG",1,"UN",6.0)]),
+    (6,  "A VOCADOS",          "Plaça Josep Barangé 2",             "08402", 41.6075, 2.2899, 30, 13,  95.0, None,          0, None,    None,
+     [("FDT13","FREE DAMM TOSTADA 1/3 RET.",1,"CAJ",14.0),("VO13","VOLL-DAMM 1/3 RET.",1,"CAJ",14.0),
+      ("PI13","AGUA PIRINEA 1/3 GAS RET",1,"CAJ",6.0),("0VE1062","GATA NEGRA TINTO JOVEN 75CL 6U",1,"CAJ",8.0),
+      ("0VE1063","GATA BLANCA BLANCO JOVEN 75CL 6U",1,"CAJ",8.0),("0VE0524","SENORIO DE LIZIA VERDEJO 75CL 6U",1,"CAJ",8.0),
+      ("0VE0543","IRREVERENTE TINTO ROBLE 75CL 6U",1,"CAJ",8.0),("0VE2132","MONTERIO BLANCO ROSCA 6U",1,"CAJ",8.0),
+      ("0VE0945","SENORIO DE LAZOIRO 75CL 6U",1,"CAJ",8.0)]),
+    (7,  "CAFE DE LA CORONA",  "Plaça de la Corona 14",             "08402", 41.6056, 2.2884, 47, 36, 260.0, "PZ_CORONA",   4, 41.6058, 2.2880,
+     [("ED13","ESTRELLA DAMM 1/3 RET. PP",7,"CAJ",98.0),("FDL13","FREE DAMM LIMON 1/3 RET.",1,"CAJ",14.0),
+      ("FDT13","FREE DAMM TOSTADA 1/3 RET.",1,"CAJ",14.0),("VO13","VOLL-DAMM 1/3 RET.",1,"CAJ",14.0),
+      ("0AG0183","VICHY CATALAN GAS 30CL 24U",1,"CAJ",7.0),("0LT0032","CACAOLAT VIDRIO 20CL 30U",2,"CAJ",14.0),
+      ("0LT0090","LETONA SEMI SIN LACTOSA 1L 6U",2,"CAJ",12.0),("0LT0034","LETONA SEMI 1,5L 6U",5,"CAJ",30.0),
+      ("0VE0524","SENORIO DE LIZIA VERDEJO 75CL 6U",1,"CAJ",8.0),("0AM0004","CHOVI ACEITE OLIVA SOB 1CL 250U",1,"CAJ",2.0),
+      ("0AM1167","MARINAS PATATAS OLIVA 47G 10U",4,"CAJ",8.0),("0AM5394","PROEZA ATUN A.GIRASOL 1KG",3,"UN",3.0),
+      ("0LM0475","DON PALILLO BROCHETA 15CM 200U",1,"CAJ",1.0),("0LM0118","MAYA CEPILLO ESCOBA",2,"UN",2.0)]),
+    (8,  "GRANJA GROC",        "Plaça de la Corona 9",              "08402", 41.6056, 2.2884, 28, 20, 140.0, "PZ_CORONA",   4, 41.6058, 2.2880,
+     [("ED13","ESTRELLA DAMM 1/3 RET. PP",6,"CAJ",84.0),("0LT0032","CACAOLAT VIDRIO 20CL 30U",1,"CAJ",7.0),
+      ("0LT0033","LETONA GRAN CREME 1,5L 6U",6,"CAJ",36.0),("VE12SP","AGUA VERI 1/2 PET 24U",5,"CAJ",30.0)]),
+    (9,  "BUSSINETS DE CUINA", "Carrer Conestable de Portugal 13",  "08402", 41.6052, 2.2894, 30, 10, 100.0, None,          0, None,    None,
+     [("0AM1195","GANCEDO COCTEL FRUTOS SECOS 1KG",5,"UN",5.0),("0AM3669","GANCEDO ALMENDRA TOSTADA 1KG",2,"UN",2.0),
+      ("0AM5392","PROEZA GARBANZOS EXTRA 3KG",2,"UN",6.0),("0AM5397","SURINVER ESCALIVADA 1,1KG",2,"UN",2.2),
+      ("0AM3864","FRIMASOL ACEITE GIRASOL 25L",1,"UN",25.0),("0AM5394","PROEZA ATUN A.GIRASOL 1KG",1,"UN",1.0),
+      ("0AM0161","GALLO TORTELINIS CARNE 2KG",1,"UN",2.0),("0AM5587","BONAPI MIEL MILFLORES 350G",2,"UN",0.7)]),
+    (10, "BAR LOCALET",        "Carrer d'Alfons IV 48",             "08401", 41.6046, 2.2881, 30, 10,  75.0, "PZ_ALFONS_IV",5, 41.6044, 2.2877,
+     [("VO13","VOLL-DAMM 1/3 RET.",3,"CAJ",42.0),("0LT0093","ATO DESNATADA SIN LACTOSA 1L 6U",1,"CAJ",6.0),
+      ("0RF1698","COCA COLA ZERO IMPORT LATA33 24U",2,"CAJ",16.0),("0AM5394","PROEZA ATUN A.GIRASOL 1KG",2,"UN",2.0),
+      ("0LM0030","KH 7 DESENGRASANTE 5L",1,"UN",5.0)]),
+    (11, "CAVANET",            "Carrer d'Alfons IV 85",             "08402", 41.6043, 2.2898, 30, 16, 120.0, "PZ_ALFONS_IV",5, 41.6044, 2.2877,
+     [("ED15LN","ESTRELLA DAMM 1/5 LN",5,"CAJ",35.0),("VO13","VOLL-DAMM 1/3 RET.",3,"CAJ",42.0),
+      ("0LT0033","LETONA GRAN CREME 1,5L 6U",4,"CAJ",24.0)]),
+    (12, "EL REFUGI D'EN CUCH","Carrer de Sant Jaume 46",           "08401", 41.6045, 2.2857, 15,  6,  40.0, None,          0, None,    None,
+     [("0LT0033","LETONA GRAN CREME 1,5L 6U",6,"CAJ",36.0)]),
+]
+
+@app.get("/api/demo/granollers")
+def demo_granollers():
+    """
+    Demo route: 13 Granollers clients from route DR0011 (02/02/2026).
+    Pre-computed: pedestrian zones (9 parades), LIFO truck zones, pallet assignments.
+    Service times sum to 395 min. Vehicle: Camió 6t.
+    """
+    try:
+        db = get_db()
+        route_id = "DEMO-GR"
+
+        TRUCK_L = 450.0  # camio_6
+        COLORS   = ZONE_COLORS
+
+        total_boxes  = sum(t[7] for t in _DEMO_STOPS_TEMPLATE)
+        total_kg     = sum(t[8] for t in _DEMO_STOPS_TEMPLATE)
+        total_svc    = sum(t[6] for t in _DEMO_STOPS_TEMPLATE)
+
+        # ── Build stops in delivery order ────────────────────────────────────
+        current_time = 8 * 60  # 08:00
+        prev_lat, prev_lon = DEPOT_LAT, DEPOT_LON
+        stops = []
+
+        for i, t in enumerate(_DEMO_STOPS_TEMPLATE):
+            (order, nom, carrer, cp, lat, lon, svc_min, boxes_n, weight_kg,
+             pz_id, pz_walk, pz_park_lat, pz_park_lon, products) = t
+
+            stop_lat = pz_park_lat if pz_id else lat
+            stop_lon = pz_park_lon if pz_id else lon
+
+            dist_km  = haversine_km(prev_lat, prev_lon, stop_lat, stop_lon)
+            travel   = dist_km / CITY_SPEED_KMH * 60.0
+            arrival  = max(current_time + travel, 480)
+            departure = arrival + svc_min
+
+            product_lines = [
+                {"codi": p[0], "nom": p[1], "quantitat": p[2], "unitat": p[3], "pes_kg": round(p[4], 1)}
+                for p in products
+            ]
+
+            stops.append({
+                "order"              : order,
+                "client_nom"         : nom,
+                "carrer"             : carrer,
+                "cp"                 : cp,
+                "poblacio"           : "Granollers",
+                "lat"                : lat,
+                "lon"                : lon,
+                "stop_lat"           : stop_lat,
+                "stop_lon"           : stop_lon,
+                "time_window"        : {"open_min": 480, "close_min": 1320},
+                "estimated_arrival"  : int(arrival),
+                "estimated_departure": int(departure),
+                "service_min"        : svc_min,
+                "temps_servei_min"   : svc_min,
+                "factor_acces"       : 1.0,
+                "te_moll_carrega"    : False,
+                "pedestrian_zone"    : {
+                    "zone_id"    : pz_id,
+                    "parking_lat": pz_park_lat,
+                    "parking_lon": pz_park_lon,
+                    "walk_min"   : pz_walk,
+                } if pz_id else None,
+                "weight_kg"          : weight_kg,
+                "boxes_n"            : boxes_n,
+                "orders"             : [],
+                "estat"              : "pending",
+                "zone_truck_cm"      : None,
+                "color"              : COLORS[i % len(COLORS)],
+                "product_lines"      : product_lines,
+            })
+
+            current_time = departure
+            prev_lat, prev_lon = stop_lat, stop_lon
+
+        # ── LIFO truck zones (door=0 → back=TRUCK_L) ────────────────────────
+        truck_zones   = []
+        cursor_x      = 0.0
+        axle_front_kg = 0.0
+        axle_rear_kg  = 0.0
+        half_l        = TRUCK_L / 2.0
+
+        for stop in reversed(stops):
+            boxes_n   = stop["boxes_n"]
+            zone_w    = round(boxes_n / total_boxes * TRUCK_L, 1)
+            x_start   = round(cursor_x, 1)
+            x_end     = round(cursor_x + zone_w, 1)
+            mid_x     = (x_start + x_end) / 2.0
+            wkg       = stop["weight_kg"]
+            if mid_x < half_l:
+                axle_front_kg += wkg
+            else:
+                axle_rear_kg  += wkg
+            truck_zones.append({
+                "client_nom"  : stop["client_nom"],
+                "zone_x_start": x_start,
+                "zone_x_end"  : x_end,
+                "boxes_n"     : boxes_n,
+                "weight_kg"   : wkg,
+                "color"       : stop["color"],
+            })
+            cursor_x += zone_w
+
+        # ── Pallet assignments (6 pallets = camio_6) ─────────────────────────
+        n_pallets_total = 6
+        cursor_pallet   = 1
+        for z in truck_zones:
+            frac  = z["boxes_n"] / total_boxes
+            n_p   = max(1, round(frac * n_pallets_total))
+            z["pallet_start"] = cursor_pallet
+            z["pallet_end"]   = cursor_pallet + n_p - 1
+            z["n_pallets"]    = n_p
+            cursor_pallet    += n_p
+        # Scale down
+        while cursor_pallet - 1 > n_pallets_total:
+            largest = max(truck_zones, key=lambda z: z["n_pallets"])
+            if largest["n_pallets"] <= 1:
+                break
+            largest["n_pallets"] -= 1
+            largest["pallet_end"] -= 1
+            cursor_pallet -= 1
+
+        # Zones are in loading order (door→back). Delivery order = reversed.
+        zones_delivery = list(reversed(truck_zones))
+        zone_by_client = {z["client_nom"]: z for z in zones_delivery}
+
+        # Stamp truck zone onto each stop
+        for stop in stops:
+            z = zone_by_client.get(stop["client_nom"])
+            if z:
+                stop["zone_truck_cm"] = {
+                    "x_start"    : z["zone_x_start"],
+                    "x_end"      : z["zone_x_end"],
+                    "color"      : z["color"],
+                    "pallet_start": z.get("pallet_start"),
+                    "pallet_end"  : z.get("pallet_end"),
+                    "n_pallets"   : z.get("n_pallets"),
+                }
+
+        axle_warning = (axle_front_kg > FRONT_AXLE_LIMIT_KG or
+                        axle_rear_kg  > REAR_AXLE_LIMIT_KG)
+        efficiency   = round(cursor_x / TRUCK_L * 100, 1)
+
+        truck_loading = {
+            "truck_zones"   : zones_delivery,
+            "axle_front_kg" : round(axle_front_kg, 1),
+            "axle_rear_kg"  : round(axle_rear_kg, 1),
+            "axle_warning"  : axle_warning,
+            "efficiency_pct": efficiency,
+        }
+
+        # Unique parking stops
+        seen_pz = set()
+        n_parades = 0
+        for s in stops:
+            pz = s.get("pedestrian_zone")
+            if pz:
+                if pz["zone_id"] not in seen_pz:
+                    seen_pz.add(pz["zone_id"])
+                    n_parades += 1
+            else:
+                n_parades += 1
+
+        total_km  = round(haversine_km(DEPOT_LAT, DEPOT_LON, 41.6060, 2.2880) * 2.2, 2)  # approx
+
+        kpis = {
+            "total_km"    : total_km,
+            "total_min"   : round(total_svc + total_km / CITY_SPEED_KMH * 60, 1),
+            "weight_kg"   : round(total_kg, 1),
+            "n_stops"     : len(stops),
+            "n_parades"   : n_parades,
+            "vehicle_type": "camio_6",
+            "vehicle_name": "Camió 6 t",
+            "pallets_used": n_pallets_total,
+            "pallets_total": n_pallets_total,
+            "temps_parada_min": total_svc,
+        }
+
+        # Persist (upsert by demo route_id so it doesn't accumulate)
+        db["routes"].replace_one(
+            {"route_id": route_id},
+            {
+                "route_id"     : route_id,
+                "created_at"   : datetime.datetime.utcnow(),
+                "status"       : "packed",
+                "depot"        : {"lat": DEPOT_LAT, "lon": DEPOT_LON, "nom": "DDI Mollet"},
+                "stops"        : stops,
+                "kpis"         : kpis,
+                "truck_loading": truck_loading,
+            },
+            upsert=True,
+        )
+
+        return {"route_id": route_id, "stops": stops, "kpis": kpis, "truck_loading": truck_loading}
+
     except Exception as e:
         raise HTTPException(500, str(e))
 

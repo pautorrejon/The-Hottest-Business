@@ -1,9 +1,45 @@
 import React, { useState, useEffect, useCallback } from "react";
 import { useNavigate } from "react-router-dom";
-import { postOptimize, postPackTruck, getProducts, getClients } from "../api";
+import { postOptimize, postPackTruck, getProducts, getDemoRoute } from "../api";
 import Spinner from "../components/Spinner";
 
 const RED = "#E30613";
+
+/* ── 13 Granollers clients · DR0011 · 02/02/2026 ─────────────────────────── */
+const PZ_LABELS = {
+  PZ_CENTRE:    { label: "Zona Vianants Centre", color: "#7c3aed" },
+  PZ_CORONA:    { label: "Zona Vianants Corona", color: "#0891b2" },
+  PZ_ALFONS_IV: { label: "Zona Vianants Alfons IV", color: "#d97706" },
+};
+
+const DEMO_CLIENTS = [
+  { nom: "EL MENÚ",            adresa: "Carrer de Ponent 12",             cp: "08401", svc: 20,  boxes: 10, pz: null,
+    prods: ["ESTRELLA DAMM 1/3 RET. PP ×1 CAJ","AGUA VERI 1,5L PET 12U ×2 CAJ","LETONA GRAN CREME 1,5L 6U ×2 CAJ","COCA COLA LATA 33CL 24U ×1 CAJ","COCA COLA ZERO LATA 33CL 24U ×1 CAJ","AGUA VERI 1/2 PET 24U ×1 CAJ"] },
+  { nom: "BAR MERCADO",        adresa: "Plaça Caserna s/n",               cp: "08401", svc: 25,  boxes: 12, pz: null,
+    prods: ["FONT D.OR NATURAL 1,5L PET 6U ×4 CAJ","YOSOY AVENA BARISTA 1L 6U ×1 CAJ","JUVER NÉCTAR MELOCOTÓN 20CL 24U ×1 CAJ","VICHY CATALAN GAS 30CL 24U ×1 CAJ","TRINA NARANJA SLEEK 33CL 24U ×1 CAJ","BARGALLO OLIVA SANSA 5L ×1 UN"] },
+  { nom: "CAFE SANT ROC",      adresa: "Carrer de Sant Roc 5",            cp: "08400", svc: 35,  boxes: 18, pz: null,
+    prods: ["ESTRELLA DAMM 1/3 RET. PP ×4 CAJ","VOLL-DAMM 1/3 RET. ×1 CAJ","DAURA DAMM 1/3 SR 6U ×1 CAJ","VICHY CATALAN GAS 30CL 24U ×1 CAJ","LETONA SEMI 1,5L 6U ×3 CAJ","ALLUE CAVA BRUT NATURE 75CL 6U ×1 CAJ","MARINAS PATATAS OLIVA 47G 10U ×2 CAJ"] },
+  { nom: "PA TONET",           adresa: "Plaça de la Porxada 3",           cp: "08401", svc: 32,  boxes: 22, pz: "PZ_CENTRE",
+    prods: ["LETONA GRAN CREME 1L VR 12U ×5 CAJ","AGUA VERI 1,5L PET 12U ×2 CAJ","CACAOLAT VIDRIO 20CL 30U ×2 CAJ","COCA COLA ZERO VR23,7 24U ×1 CAJ","GRANINI MELOCOTÓN 20CL 24U ×2 CAJ","GRANINI PINYA 20CL 24U ×2 CAJ","SCHWEPPES TONICA 20CL 24U ×1 CAJ","YOSOY AVENA BARISTA 1L 6U ×4 CAJ"] },
+  { nom: "CASA FONDA EUROPA",  adresa: "Carrer Anselm Clavé 1",           cp: "08402", svc: 40,  boxes: 35, pz: "PZ_CENTRE",
+    prods: ["LETONA GRAN CREME 1,5L 6U ×14 CAJ","FRIMASOL ACEITE GIRASOL 25L ×2 UN","SABOR DEL SUR ACEITE OLIVA 5L ×6 UN","BARGALLO OLI FREGIR 20L ×4 UN","AZUCARERA AZÚCAR 25KG ×2 UN","GALLO PAN RALLADO 5KG ×2 UN","GALLO HARINA DE TRIGO 5KG ×6 UN","VICHY CATALAN GAS 1/2 20U ×7 CAJ"] },
+  { nom: "Platillos",          adresa: "Plaça de Pau Casals 14",          cp: "08402", svc: 33,  boxes: 12, pz: "PZ_CENTRE",
+    prods: ["FREE DAMM LIMON 1/3 RET. ×2 CAJ","FREE DAMM TOSTADA 1/3 RET. ×2 CAJ","LETONA GRAN CREME 1,5L 6U ×1 CAJ","FRIMASOL ACEITE GIRASOL 25L ×1 UN","GC SERVILLETAS 2C 40x40 100U ×10 UN","BALNIC LAVAVAJILLAS MAQ. 6KG ×1 UN"] },
+  { nom: "A VOCADOS",          adresa: "Plaça Josep Barangé 2",           cp: "08402", svc: 30,  boxes: 13, pz: null,
+    prods: ["FREE DAMM TOSTADA 1/3 RET. ×1 CAJ","VOLL-DAMM 1/3 RET. ×1 CAJ","AGUA PIRINEA 1/3 GAS RET ×1 CAJ","GATA NEGRA TINTO JOVEN 75CL 6U ×1 CAJ","SEÑORIO DE LIZIA VERDEJO 75CL 6U ×1 CAJ","IRREVERENTE TINTO ROBLE 75CL 6U ×1 CAJ","MONTERIO BLANCO ROSCA 6U ×1 CAJ"] },
+  { nom: "CAFE DE LA CORONA",  adresa: "Plaça de la Corona 14",           cp: "08402", svc: 47,  boxes: 36, pz: "PZ_CORONA",
+    prods: ["ESTRELLA DAMM 1/3 RET. PP ×7 CAJ","FREE DAMM LIMON 1/3 RET. ×1 CAJ","FREE DAMM TOSTADA 1/3 RET. ×1 CAJ","VOLL-DAMM 1/3 RET. ×1 CAJ","VICHY CATALAN GAS 30CL 24U ×1 CAJ","LETONA SEMI 1,5L 6U ×5 CAJ","CACAOLAT VIDRIO 20CL 30U ×2 CAJ","MARINAS PATATAS OLIVA 47G 10U ×4 CAJ"] },
+  { nom: "GRANJA GROC",        adresa: "Plaça de la Corona 9",            cp: "08402", svc: 28,  boxes: 20, pz: "PZ_CORONA",
+    prods: ["ESTRELLA DAMM 1/3 RET. PP ×6 CAJ","CACAOLAT VIDRIO 20CL 30U ×1 CAJ","LETONA GRAN CREME 1,5L 6U ×6 CAJ","AGUA VERI 1/2 PET 24U ×5 CAJ"] },
+  { nom: "BUSSINETS DE CUINA", adresa: "Carrer Conestable de Portugal 13",cp: "08402", svc: 30,  boxes: 10, pz: null,
+    prods: ["GANCEDO CÓCTEL FRUTOS SECOS 1KG ×5 UN","GANCEDO ALMENDRA TOSTADA 1KG ×2 UN","PROEZA GARBANZOS EXTRA 3KG ×2 UN","FRIMASOL ACEITE GIRASOL 25L ×1 UN","GALLO TORTELINIS CARNE 2KG ×1 UN","SURINVER ESCALIVADA 1,1KG ×2 UN"] },
+  { nom: "BAR LOCALET",        adresa: "Carrer d'Alfons IV 48",           cp: "08401", svc: 30,  boxes: 10, pz: "PZ_ALFONS_IV",
+    prods: ["VOLL-DAMM 1/3 RET. ×3 CAJ","COCA COLA ZERO IMPORT LATA33 24U ×2 CAJ","ATO DESNATADA SIN LACTOSA 1L 6U ×1 CAJ","KH 7 DESENGRASANTE 5L ×1 UN"] },
+  { nom: "CAVANET",            adresa: "Carrer d'Alfons IV 85",           cp: "08402", svc: 30,  boxes: 16, pz: "PZ_ALFONS_IV",
+    prods: ["ESTRELLA DAMM 1/5 LN ×5 CAJ","VOLL-DAMM 1/3 RET. ×3 CAJ","LETONA GRAN CREME 1,5L 6U ×4 CAJ"] },
+  { nom: "EL REFUGI D'EN CUCH",adresa: "Carrer de Sant Jaume 46",         cp: "08401", svc: 15,  boxes: 6,  pz: null,
+    prods: ["LETONA GRAN CREME 1,5L 6U ×6 CAJ"] },
+];
 
 let _uid = 1;
 const uid = () => _uid++;
@@ -37,11 +73,13 @@ function getDescripcio(prod) {
 }
 
 export default function Orders({ onRouteReady }) {
-  const [clients,  setClients]  = useState([newClient()]);
-  const [products, setProducts] = useState([]);
-  const [loading,  setLoading]  = useState(false);
-  const [loadStep, setLoadStep] = useState("");
-  const [error,    setError]    = useState(null);
+  const [clients,   setClients]  = useState([newClient()]);
+  const [products,  setProducts] = useState([]);
+  const [loading,   setLoading]  = useState(false);
+  const [loadStep,  setLoadStep] = useState("");
+  const [error,     setError]    = useState(null);
+  const [demoMode,  setDemoMode] = useState(false);
+  const [expanded,  setExpanded] = useState({});
   const navigate = useNavigate();
 
   useEffect(() => {
@@ -81,19 +119,29 @@ export default function Orders({ onRouteReady }) {
     ));
   }, [products]);
 
-  async function loadGranollers() {
+  /* ── Demo: load 13 Granollers clients ───────────────────────────────────── */
+  function loadGranollers() {
     setError(null);
-    setLoading(true); setLoadStep("Carregant clients reals de MongoDB…");
+    setDemoMode(true);
+    setExpanded({});
+  }
+
+  async function handleDemoRoute() {
+    setError(null);
+    setLoading(true);
+    setLoadStep("Generant ruta Granollers (OR-Tools + LIFO 3D)…");
     try {
-      const r = await getClients();
-      setClients((r.clients ?? []).map(c => newClient(c)));
+      const r = await getDemoRoute();
+      const vtype = r.kpis?.vehicle_type ?? "camio_6";
+      onRouteReady(r.route_id, vtype);
+      navigate("/warehouse");
     } catch (e) {
-      setError(`No s'han pogut carregar els clients: ${e.message}`);
-    } finally {
-      setLoading(false); setLoadStep("");
+      setError(`Error al backend: ${e.message}`);
+      setLoading(false);
     }
   }
 
+  /* ── Manual route optimize ───────────────────────────────────────────────── */
   async function handleOptimize() {
     setError(null);
     setLoading(true);
@@ -115,87 +163,214 @@ export default function Orders({ onRouteReady }) {
       onRouteReady(opt.route_id, vtype);
       navigate("/warehouse");
     } catch (e) {
-      setError(`Error al backend: ${e.message}. Comprova que main.py funciona a localhost:8000.`);
+      setError(`Error al backend: ${e.message}.`);
       setLoading(false);
     }
   }
+
+  const totalSvc = DEMO_CLIENTS.reduce((s, c) => s + c.svc, 0);
 
   return (
     <div style={{ maxWidth: 960, margin: "0 auto", padding: "28px 20px 80px" }}>
       {loading && <Spinner text={loadStep} />}
 
-      <div style={{ marginBottom: 28 }}>
-        <h1 style={{
-          margin: "0 0 6px",
-          fontFamily: "'Barlow Condensed', sans-serif",
-          fontWeight: 900, fontSize: 32, color: "#f0f0f0", letterSpacing: "1px",
-        }}>
-          NOVA RUTA DE LLIURAMENT
+      <div style={{ marginBottom: 24 }}>
+        <h1 style={{ margin: "0 0 4px", fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900, fontSize: 32, color: "#111827", letterSpacing: "1px" }}>
+          GESTIÓ DE COMANDES
         </h1>
-        <p style={{ margin: 0, color: "#666", fontSize: 13 }}>
-          Afegeix clients i productes, o carrega les comandes reals de MongoDB
+        <p style={{ margin: 0, color: "#6b7280", fontSize: 13 }}>
+          Carrega la ruta de Granollers o crea una ruta manual
         </p>
       </div>
 
+      {/* ── DEMO button ── */}
       <button onClick={loadGranollers} style={{
-        width: "100%", padding: "16px 0", marginBottom: 16,
-        background: RED, color: "#fff", border: "none", borderRadius: 10,
-        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900,
-        fontSize: 18, letterSpacing: "1.5px", cursor: "pointer",
+        width: "100%", padding: "18px 0", marginBottom: 12,
+        background: demoMode ? "#b91c1c" : RED, color: "#fff", border: "none", borderRadius: 10,
+        fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900,
+        fontSize: 20, letterSpacing: "1.5px", cursor: "pointer",
         boxShadow: "0 4px 24px rgba(227,6,19,.35)",
       }}>
-        🍺 CARREGAR COMANDA GRANOLLERS
+        {demoMode ? "COMANDA GRANOLLERS CARREGADA" : "CARREGAR COMANDA GRANOLLERS"}
       </button>
 
-      <button onClick={() => setClients([newClient()])} style={{
-        width: "100%", padding: "10px 0", marginBottom: 24,
-        background: "transparent", color: "#666", border: "1.5px solid #333",
-        borderRadius: 10, fontWeight: 600, fontSize: 14, cursor: "pointer",
-      }}>
-        + Nova comanda en blanc
-      </button>
+      {/* ── Manual form toggle ── */}
+      {!demoMode && (
+        <button onClick={() => setClients([newClient()])} style={{
+          width: "100%", padding: "10px 0", marginBottom: 24,
+          background: "#fff", color: "#4b5563", border: "1.5px solid #dde1e9",
+          borderRadius: 10, fontWeight: 600, fontSize: 14, cursor: "pointer",
+        }}>
+          + Nova comanda en blanc
+        </button>
+      )}
+      {demoMode && (
+        <button onClick={() => setDemoMode(false)} style={{
+          width: "100%", padding: "8px 0", marginBottom: 24,
+          background: "#fff", color: "#6b7280", border: "1.5px solid #dde1e9",
+          borderRadius: 10, fontWeight: 600, fontSize: 13, cursor: "pointer",
+        }}>
+          Crear ruta manual en blanc
+        </button>
+      )}
 
       {error && (
-        <div style={{ background: "#1a0a0a", border: "1.5px solid #c62828", borderRadius: 8, padding: "10px 14px", color: "#ef9a9a", fontSize: 13, marginBottom: 16 }}>
-          ⚠️ {error}
+        <div style={{ background: "#fef2f2", border: "1.5px solid #fca5a5", borderRadius: 8, padding: "10px 14px", color: "#b91c1c", fontSize: 13, marginBottom: 16 }}>
+          {error}
         </div>
       )}
 
-      {clients.map((c, ci) => (
-        <ClientBlock key={c.id} c={c} ci={ci}
-          productCatalogue={products}
-          setClient={setClient}
-          setProduct={setProduct}
-          selectProductRef={selectProductRef}
-          addProduct={addProduct}
-          removeProduct={removeProduct}
-          removeClient={() => removeClient(c.id)}
-          canRemove={clients.length > 1}
-        />
-      ))}
+      {/* ══ DEMO MODE: 13 read-only client cards ══════════════════════════════ */}
+      {demoMode && (
+        <>
+          {/* Route header */}
+          <div style={{ background: "#fff", borderRadius: 10, padding: "14px 18px", marginBottom: 16, border: "1.5px solid #dde1e9", boxShadow: "0 1px 4px rgba(0,0,0,.05)" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 16, flexWrap: "wrap" }}>
+              <div>
+                <div style={{ fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900, fontSize: 16, color: "#111827", letterSpacing: "0.5px" }}>
+                  RUTA DR0011 — GRANOLLERS
+                </div>
+                <div style={{ fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", marginTop: 2 }}>
+                  02/02/2026 · Repartidor: Adrià Ramos Rosich
+                </div>
+              </div>
+              <div style={{ marginLeft: "auto", display: "flex", gap: 20, flexShrink: 0 }}>
+                <KpiChip label="Clients" val="13" />
+                <KpiChip label="Parades" val="9" />
+                <KpiChip label="Temps parada" val={`${totalSvc} min`} />
+              </div>
+            </div>
+          </div>
 
-      <button onClick={addClient} disabled={clients.length >= 20} style={{
-        width: "100%", padding: 12, border: `2px dashed ${RED}`,
-        background: "transparent", color: RED, borderRadius: 10,
-        fontWeight: 700, cursor: "pointer", fontSize: 14,
-        marginBottom: 24, opacity: clients.length >= 20 ? 0.4 : 1,
-        fontFamily: "'Barlow Condensed', sans-serif", letterSpacing: "0.5px",
-      }}>
-        + AFEGIR CLIENT {clients.length >= 20 ? "(MÀXIM 20)" : `(${clients.length}/20)`}
-      </button>
+          {/* PZ legend */}
+          <div style={{ display: "flex", gap: 8, marginBottom: 14, flexWrap: "wrap" }}>
+            {Object.entries(PZ_LABELS).map(([id, { label, color }]) => (
+              <span key={id} style={{ display: "inline-flex", alignItems: "center", gap: 5, background: color + "15", border: `1px solid ${color}40`, borderRadius: 20, padding: "3px 10px", fontSize: 11, color, fontWeight: 700, fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.3px" }}>
+                <span style={{ width: 7, height: 7, borderRadius: "50%", background: color, display: "inline-block" }} />
+                {label}
+              </span>
+            ))}
+          </div>
 
-      <button onClick={handleOptimize} style={{
-        width: "100%", padding: "16px 0", background: RED, color: "#fff",
-        border: "none", borderRadius: 10,
-        fontFamily: "'Barlow Condensed', sans-serif", fontWeight: 900,
-        fontSize: 20, letterSpacing: "2px", cursor: "pointer",
-        boxShadow: "0 4px 24px rgba(227,6,19,.4)",
-      }}>
-        OPTIMITZAR RUTA →
-      </button>
-      <p style={{ textAlign: "center", color: "#555", fontSize: 12, marginTop: 10 }}>
-        Assignació automàtica de vehicle · FFD-LIFO 3D · OR-Tools CVRPTW
-      </p>
+          {/* Client cards */}
+          {DEMO_CLIENTS.map((c, i) => {
+            const pzInfo = c.pz ? PZ_LABELS[c.pz] : null;
+            const isOpen = !!expanded[i];
+            return (
+              <div key={i} style={{
+                background: "#fff", borderRadius: 10, marginBottom: 10,
+                border: `1px solid ${pzInfo ? pzInfo.color + "40" : "#dde1e9"}`,
+                borderLeft: `4px solid ${pzInfo ? pzInfo.color : RED}`,
+                boxShadow: "0 1px 4px rgba(0,0,0,.05)",
+                overflow: "hidden",
+              }}>
+                <div
+                  onClick={() => setExpanded(e => ({ ...e, [i]: !e[i] }))}
+                  style={{ display: "flex", alignItems: "center", gap: 10, padding: "12px 16px", cursor: "pointer" }}>
+                  <span style={{ background: RED, color: "#fff", borderRadius: 5, padding: "1px 9px", fontWeight: 900, fontSize: 12, fontFamily: "'DM Mono',monospace", flexShrink: 0 }}>
+                    {String(i + 1).padStart(2, "0")}
+                  </span>
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 700, fontSize: 14, color: "#111827", overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+                      {c.nom}
+                    </div>
+                    <div style={{ fontSize: 11, color: "#9ca3af", fontFamily: "'DM Mono',monospace" }}>
+                      {c.adresa} · {c.cp}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 8, alignItems: "center", flexShrink: 0 }}>
+                    {pzInfo && (
+                      <span style={{ fontSize: 10, fontWeight: 700, color: pzInfo.color, background: pzInfo.color + "12", borderRadius: 5, padding: "2px 7px", fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.3px" }}>
+                        {pzInfo.label.replace("Zona Vianants ", "PZ ")}
+                      </span>
+                    )}
+                    <span style={{ fontSize: 11, color: "#6b7280", fontFamily: "'DM Mono',monospace", whiteSpace: "nowrap" }}>
+                      {c.boxes} caixes · {c.svc} min
+                    </span>
+                    <span style={{ color: "#9ca3af", fontSize: 14 }}>{isOpen ? "▲" : "▼"}</span>
+                  </div>
+                </div>
+                {isOpen && (
+                  <div style={{ padding: "0 16px 12px 16px", borderTop: "1px solid #f0f2f5" }}>
+                    {c.prods.map((p, pi) => (
+                      <div key={pi} style={{ fontSize: 12, color: "#374151", padding: "4px 0", borderBottom: pi < c.prods.length - 1 ? "1px solid #f8f9fb" : "none", display: "flex", gap: 8 }}>
+                        <span style={{ color: "#9ca3af", fontFamily: "'DM Mono',monospace", fontSize: 10, flexShrink: 0, paddingTop: 1 }}>·</span>
+                        {p}
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            );
+          })}
+
+          {/* CTA */}
+          <div style={{ marginTop: 20 }}>
+            <button onClick={handleDemoRoute} style={{
+              width: "100%", padding: "16px 0", background: RED, color: "#fff",
+              border: "none", borderRadius: 10,
+              fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900,
+              fontSize: 20, letterSpacing: "2px", cursor: "pointer",
+              boxShadow: "0 4px 24px rgba(227,6,19,.4)",
+            }}>
+              GENERAR RUTA GRANOLLERS →
+            </button>
+            <p style={{ textAlign: "center", color: "#9ca3af", fontSize: 12, marginTop: 8 }}>
+              Assignació automàtica de vehicle · FFD-LIFO 3D · 9 parades · {totalSvc} min temps de parada
+            </p>
+          </div>
+        </>
+      )}
+
+      {/* ══ MANUAL MODE ═══════════════════════════════════════════════════════ */}
+      {!demoMode && (
+        <>
+          {clients.map((c, ci) => (
+            <ClientBlock key={c.id} c={c} ci={ci}
+              productCatalogue={products}
+              setClient={setClient}
+              setProduct={setProduct}
+              selectProductRef={selectProductRef}
+              addProduct={addProduct}
+              removeProduct={removeProduct}
+              removeClient={() => removeClient(c.id)}
+              canRemove={clients.length > 1}
+            />
+          ))}
+
+          <button onClick={addClient} disabled={clients.length >= 20} style={{
+            width: "100%", padding: 12, border: `2px dashed ${RED}`,
+            background: "transparent", color: RED, borderRadius: 10,
+            fontWeight: 700, cursor: "pointer", fontSize: 14,
+            marginBottom: 24, opacity: clients.length >= 20 ? 0.4 : 1,
+            fontFamily: "'Barlow Condensed',sans-serif", letterSpacing: "0.5px",
+          }}>
+            + AFEGIR CLIENT {clients.length >= 20 ? "(MÀXIM 20)" : `(${clients.length}/20)`}
+          </button>
+
+          <button onClick={handleOptimize} style={{
+            width: "100%", padding: "16px 0", background: RED, color: "#fff",
+            border: "none", borderRadius: 10,
+            fontFamily: "'Barlow Condensed',sans-serif", fontWeight: 900,
+            fontSize: 20, letterSpacing: "2px", cursor: "pointer",
+            boxShadow: "0 4px 24px rgba(227,6,19,.4)",
+          }}>
+            OPTIMITZAR RUTA →
+          </button>
+          <p style={{ textAlign: "center", color: "#9ca3af", fontSize: 12, marginTop: 10 }}>
+            Assignació automàtica de vehicle · FFD-LIFO 3D · OR-Tools CVRPTW
+          </p>
+        </>
+      )}
+    </div>
+  );
+}
+
+function KpiChip({ label, val }) {
+  return (
+    <div style={{ textAlign: "center" }}>
+      <div style={{ fontFamily: "'DM Mono',monospace", fontWeight: 700, fontSize: 16, color: RED }}>{val}</div>
+      <div style={{ fontSize: 10, color: "#6b7280", textTransform: "uppercase", letterSpacing: "0.5px" }}>{label}</div>
     </div>
   );
 }
@@ -204,8 +379,8 @@ function ClientBlock({ c, ci, productCatalogue, setClient, setProduct, selectPro
   const sc = (f, v) => setClient(c.id, f, v);
   return (
     <div style={{
-      background: "#1a1a1a", borderRadius: 12, padding: "18px 20px", marginBottom: 14,
-      borderLeft: `4px solid ${RED}`, boxShadow: "0 2px 12px rgba(0,0,0,.3)",
+      background: "#fff", borderRadius: 12, padding: "18px 20px", marginBottom: 14,
+      borderLeft: `4px solid ${RED}`, boxShadow: "0 1px 6px rgba(0,0,0,.07)",
     }}>
       <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 14 }}>
         <span style={{
@@ -215,7 +390,7 @@ function ClientBlock({ c, ci, productCatalogue, setClient, setProduct, selectPro
           CLIENT {ci + 1}
         </span>
         {canRemove && (
-          <button onClick={removeClient} style={{ marginLeft: "auto", background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 18 }}>✕</button>
+          <button onClick={removeClient} style={{ marginLeft: "auto", background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 18 }}>✕</button>
         )}
       </div>
 
@@ -229,11 +404,11 @@ function ClientBlock({ c, ci, productCatalogue, setClient, setProduct, selectPro
         <Field label="Tancament" value={c.close} onChange={v => sc("close", v)} type="time" />
       </div>
 
-      <div style={{ fontSize: 11, fontWeight: 700, color: "#555", marginBottom: 8, textTransform: "uppercase", letterSpacing: "1px" }}>
+      <div style={{ fontSize: 11, fontWeight: 700, color: "#6b7280", marginBottom: 8, textTransform: "uppercase", letterSpacing: "1px" }}>
         Productes
       </div>
-      <div style={{ background: "#111", borderRadius: 8, padding: "10px 12px", border: "1px solid #222" }}>
-        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px 24px", gap: 6, fontSize: 10, color: "#555", fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>
+      <div style={{ background: "#f8f9fb", borderRadius: 8, padding: "10px 12px", border: "1px solid #e8eaed" }}>
+        <div style={{ display: "grid", gridTemplateColumns: "1fr 80px 90px 24px", gap: 6, fontSize: 10, color: "#9ca3af", fontWeight: 700, marginBottom: 8, textTransform: "uppercase", letterSpacing: "0.5px" }}>
           <span>Producte</span><span>Quantitat</span><span>Unitat</span><span />
         </div>
         {c.products.map(p => (
@@ -247,7 +422,7 @@ function ClientBlock({ c, ci, productCatalogue, setClient, setProduct, selectPro
           />
         ))}
         <button onClick={() => addProduct(c.id)} style={{
-          marginTop: 8, background: "none", border: "1px dashed #333", color: "#555",
+          marginTop: 8, background: "none", border: "1px dashed #dde1e9", color: "#6b7280",
           borderRadius: 6, padding: "5px 14px", cursor: "pointer", fontSize: 12, width: "100%",
         }}>
           + Afegir producte
@@ -259,8 +434,8 @@ function ClientBlock({ c, ci, productCatalogue, setClient, setProduct, selectPro
 
 const NI = {
   width: "100%", padding: "7px 10px", borderRadius: 6,
-  border: "1.5px solid #2a2a2a", fontSize: 13, outline: "none",
-  background: "#0f0f0f", color: "#f0f0f0",
+  border: "1.5px solid #dde1e9", fontSize: 13, outline: "none",
+  background: "#fff", color: "#111827",
 };
 
 function ProductRow({ p, catalogue, onSelectRef, onChange, onRemove, canRemove }) {
@@ -314,28 +489,26 @@ function ProductRow({ p, catalogue, onSelectRef, onChange, onRemove, canRemove }
         {showDropdown && filtered.length > 0 && (
           <div style={{
             position: "absolute", top: "100%", left: 0, right: 0, zIndex: 200,
-            background: "#1a1a1a", border: "1.5px solid #333", borderRadius: 8,
-            boxShadow: "0 6px 20px rgba(0,0,0,.6)", maxHeight: 300, overflowY: "auto",
+            background: "#fff", border: "1.5px solid #dde1e9", borderRadius: 8,
+            boxShadow: "0 6px 24px rgba(0,0,0,.1)", maxHeight: 300, overflowY: "auto",
           }}>
             {filtered.map((prod, idx) => (
               <div key={prod.codi} onMouseDown={() => selectRef(prod)} style={{
                 padding: "9px 12px", cursor: "pointer",
-                borderBottom: "1px solid #222",
-                background: idx === focusIdx ? "#2a2a2a" : "transparent",
+                borderBottom: "1px solid #f0f2f5",
+                background: idx === focusIdx ? "#f3f4f6" : "transparent",
                 transition: "background .1s",
               }}
               onMouseEnter={() => setFocusIdx(idx)}>
-                {/* Línia 1: codi + nom */}
                 <div style={{ display: "flex", alignItems: "baseline", gap: 8, marginBottom: 2 }}>
-                  <span style={{ fontFamily: "'DM Mono', monospace", color: "#555", fontSize: 10, flexShrink: 0 }}>
+                  <span style={{ fontFamily: "'DM Mono', monospace", color: "#9ca3af", fontSize: 10, flexShrink: 0 }}>
                     {prod.codi}
                   </span>
-                  <span style={{ color: "#f0f0f0", fontWeight: 700, fontSize: 12 }}>
+                  <span style={{ color: "#111827", fontWeight: 700, fontSize: 12 }}>
                     {prod.nom}
                   </span>
                 </div>
-                {/* Línia 2: descripció breu */}
-                <div style={{ fontSize: 11, color: "#666" }}>
+                <div style={{ fontSize: 11, color: "#6b7280" }}>
                   {getDescripcio(prod)}
                 </div>
               </div>
@@ -357,7 +530,7 @@ function ProductRow({ p, catalogue, onSelectRef, onChange, onRemove, canRemove }
       </select>
 
       {canRemove
-        ? <button onClick={onRemove} style={{ background: "none", border: "none", color: "#555", cursor: "pointer", fontSize: 16, padding: 0, marginTop: 6 }}>✕</button>
+        ? <button onClick={onRemove} style={{ background: "none", border: "none", color: "#9ca3af", cursor: "pointer", fontSize: 16, padding: 0, marginTop: 6 }}>✕</button>
         : <span />}
     </div>
   );
@@ -366,7 +539,7 @@ function ProductRow({ p, catalogue, onSelectRef, onChange, onRemove, canRemove }
 function Field({ label, value, onChange, placeholder, type = "text" }) {
   return (
     <div>
-      <label style={{ fontSize: 11, color: "#555", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700 }}>{label}</label>
+      <label style={{ fontSize: 11, color: "#6b7280", marginBottom: 4, display: "block", textTransform: "uppercase", letterSpacing: "0.5px", fontWeight: 700 }}>{label}</label>
       <input type={type} style={NI} value={value} placeholder={placeholder}
         onChange={e => onChange(e.target.value)} />
     </div>
