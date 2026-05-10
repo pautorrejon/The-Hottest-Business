@@ -1,4 +1,4 @@
-const BASE = process.env.REACT_APP_API_URL || "http://localhost:8000";
+const BASE = "https://fbc053a63696d3.lhr.life";
 
 export const fetchHealth     = ()           => GET("/api/health");
 export const postOptimize    = (body)       => POST("/api/optimize", body || undefined);
