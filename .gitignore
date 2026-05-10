@@ -1,0 +1,5 @@
+damm-frontend/node_modules/
+damm-frontend/build/
+__pycache__/
+*.pyc
+.DS_Store
