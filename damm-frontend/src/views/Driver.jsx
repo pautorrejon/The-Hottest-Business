@@ -111,7 +111,7 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
           const lat = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * fr;
           const lng = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * fr;
           if (state.marker) state.marker.setLatLng([lat, lng]);
-          map.setView([lat, lng], map.getZoom(), { animate: false, noMoveStart: true });
+          map.panTo([lat, lng], { animate: false, noMoveStart: true });
           if (t < 1) { state.rafId = requestAnimationFrame(step); }
           else        { resolve(); }
         }
@@ -476,8 +476,10 @@ export default function Driver({ routeId }) {
 
   /* Stable reference — only recomputed when `stops` state changes, NOT on animation state changes */
   /* Must be declared before any early returns to satisfy Rules of Hooks */
-  const validStops = useMemo(() => stops.filter(s => s.lat && s.lon), [stops]);
-  const allCoords  = useMemo(() => validStops.map(s => [s.lat, s.lon]), [validStops]);
+  const validStops  = useMemo(() => stops.filter(s => s.lat && s.lon), [stops]);
+  const allCoords   = useMemo(() => validStops.map(s => [s.lat, s.lon]), [validStops]);
+  /* Stable full-route bounds — includes depot, never recreated on animation state changes */
+  const fitCoords   = useMemo(() => [[DEPOT_LAT, DEPOT_LON], ...validStops.map(s => [s.lat, s.lon])], [validStops]);
 
   if (error) return (
     <div style={{ padding: 32, color: "#b91c1c", background: "#fef2f2", margin: 24, borderRadius: 10, border: "1px solid #fca5a5" }}>
@@ -525,7 +527,8 @@ export default function Driver({ routeId }) {
                 url="https://{s}.basemaps.cartocdn.com/light_all/{z}/{x}/{y}{r}.png"
                 attribution='&copy; OSM &copy; CARTO'
               />
-              <FitBounds coords={[[DEPOT_LAT, DEPOT_LON], ...allCoords]} />
+              {/* Only auto-fit when NOT animating — during animation the truck follower drives the view */}
+              {!isAnimating && <FitBounds coords={fitCoords} />}
 
               {/* Depot marker */}
               <Marker position={[DEPOT_LAT, DEPOT_LON]} icon={L.divIcon({
