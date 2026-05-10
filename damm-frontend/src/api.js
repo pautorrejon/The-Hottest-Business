@@ -1,4 +1,4 @@
-const BASE = process.env.REACT_APP_API_URL || "https://damm-backend.onrender.com";
+const BASE = process.env.REACT_APP_API_URL || "https://the-hottest-business.onrender.com";
 
 export const fetchHealth     = ()           => GET("/api/health");
 export const postOptimize    = (body)       => POST("/api/optimize", body || undefined);
