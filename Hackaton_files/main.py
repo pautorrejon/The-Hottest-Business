@@ -35,12 +35,12 @@ from pymongo import MongoClient
 import uvicorn
 
 # ── CONFIGURATION ───────────────────────────────────────────────────────────
-_MONGO_URI_DEFAULT = (
+# Atlas URI is hardcoded so Render env-var mismatches cannot break it.
+MONGO_URI = (
     "mongodb+srv://pautorrejon_db_user:tQDV09cNAMgoELai"
     "@dammsmarttruck.k9q2nbf.mongodb.net/damm_hackathon"
     "?retryWrites=true&w=majority&appName=DammSmartTruck"
 )
-MONGO_URI = os.getenv("MONGO_URI", _MONGO_URI_DEFAULT)
 DB_NAME = "damm_hackathon"
 
 # DDI Mollet del Vallès — truck depot
