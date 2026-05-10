@@ -132,7 +132,8 @@ def assign_vehicle(total_kg: float, total_vol_l: float) -> str:
 
 # ── DATABASE ─────────────────────────────────────────────────────────────────
 def get_db():
-    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000)
+    import certifi
+    client = MongoClient(MONGO_URI, serverSelectionTimeoutMS=5000, tlsCAFile=certifi.where())
     return client[DB_NAME]
 
 

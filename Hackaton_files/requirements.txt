@@ -5,3 +5,4 @@ pydantic==2.13.4
 python-dotenv==1.2.2
 ortools==9.15.6755
 requests==2.33.1
+certifi>=2024.2.2
