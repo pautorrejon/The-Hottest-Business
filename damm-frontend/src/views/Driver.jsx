@@ -22,11 +22,33 @@ function makePulsingIcon(num, size = 34) {
     iconSize: [size, size], iconAnchor: [size/2, size/2], className: "",
   });
 }
-/* Truck: small red rectangle, no emoji */
+/* Truck: SVG silhouette facing right */
 function makeTruckIcon() {
+  const svg = `
+    <svg width="48" height="28" viewBox="0 0 48 28" xmlns="http://www.w3.org/2000/svg">
+      <!-- cargo box -->
+      <rect x="0" y="3" width="30" height="18" rx="2" fill="${RED}" stroke="#fff" stroke-width="1.2"/>
+      <!-- cab -->
+      <path d="M30 8 L30 21 L44 21 L44 12 Q44 8 40 8 Z" fill="${RED}" stroke="#fff" stroke-width="1.2"/>
+      <!-- windshield -->
+      <path d="M31 9.5 L31 16 L42 16 L42 12.5 Q42 9.5 39 9.5 Z" fill="rgba(255,255,255,0.55)"/>
+      <!-- headlight -->
+      <rect x="43" y="14" width="3" height="4" rx="1" fill="#fde68a"/>
+      <!-- wheels -->
+      <circle cx="8"  cy="23" r="4.5" fill="#1f2937"/>
+      <circle cx="8"  cy="23" r="2"   fill="#6b7280"/>
+      <circle cx="22" cy="23" r="4.5" fill="#1f2937"/>
+      <circle cx="22" cy="23" r="2"   fill="#6b7280"/>
+      <circle cx="38" cy="23" r="4.5" fill="#1f2937"/>
+      <circle cx="38" cy="23" r="2"   fill="#6b7280"/>
+      <!-- glow shadow -->
+      <ellipse cx="24" cy="27.5" rx="20" ry="1.5" fill="rgba(227,6,19,0.25)"/>
+    </svg>`;
   return L.divIcon({
-    html: `<div style="width:18px;height:11px;background:${RED};border-radius:3px;border:2px solid #fff;box-shadow:0 2px 8px rgba(227,6,19,.6)"></div>`,
-    className: "", iconAnchor: [9, 5],
+    html: svg,
+    className: "",
+    iconSize: [48, 28],
+    iconAnchor: [24, 27],
   });
 }
 
@@ -34,7 +56,7 @@ function makeTruckIcon() {
 function FitBounds({ coords }) {
   const map = useMap();
   useEffect(() => {
-    if (coords.length > 0) map.fitBounds(coords, { padding: [32, 32] });
+    if (coords.length > 0) map.fitBounds(coords, { padding: [72, 72] });
   }, [coords, map]);
   return null;
 }
@@ -89,6 +111,7 @@ function RouteController({ geometry, stops, isAnimating, callbacksRef }) {
           const lat = pts[i][0] + (pts[i + 1][0] - pts[i][0]) * fr;
           const lng = pts[i][1] + (pts[i + 1][1] - pts[i][1]) * fr;
           if (state.marker) state.marker.setLatLng([lat, lng]);
+          map.setView([lat, lng], map.getZoom(), { animate: false, noMoveStart: true });
           if (t < 1) { state.rafId = requestAnimationFrame(step); }
           else        { resolve(); }
         }
